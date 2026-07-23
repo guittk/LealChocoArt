@@ -47,7 +47,7 @@
   .icon-btn[disabled]:hover{transform:none;border-color:var(--line);}
   .cart-badge{position:absolute;top:-5px;right:-5px;background:var(--pink);color:var(--primary-ink);font-size:10px;font-weight:800;min-width:18px;height:18px;padding:0 3px;border-radius:999px;display:flex;align-items:center;justify-content:center;}
   .mobile-toggle{display:none;background:none;border:none;color:var(--ink);}
-  .mobile-row{display:none;}
+  .mobile-row{display:none;align-items:center;gap:8px;}
   .mobile-menu{border-top:2px dashed var(--line);padding:10px 20px 18px;display:flex;flex-direction:column;gap:4px;background:var(--bg);position:relative;z-index:1;}
   .mobile-menu .nav-link{text-align:left;padding:10px 4px;font-size:15.5px;}
   @media (max-width:860px){ .desktop-nav{display:none !important;} .mobile-toggle{display:inline-flex !important;} .mobile-row{display:flex !important;} }
@@ -74,10 +74,10 @@
   .hero h1{font-size:clamp(30px,5vw,48px);line-height:1.15;margin:8px 0 16px;color:var(--ink);}
   .hero h1 span{color:var(--primary-dark);}
   .hero p.lead{font-size:16px;color:var(--ink-soft);line-height:1.7;max-width:460px;font-weight:500;}
-  .hero-photo-wrap{position:relative;}
-  .hero-photo{width:100%;border-radius:38% 62% 63% 37% / 45% 40% 60% 55%;overflow:hidden;border:4px solid var(--card);box-shadow:0 22px 0 -6px var(--pink-soft), 0 20px 40px var(--shadow-tint);}
-  .hero-photo img{width:100%;display:block;object-fit:cover;aspect-ratio:1/1;}
-  .hero-badge{position:absolute;width:96px;height:96px;bottom:-14px;left:-14px;animation:spin 18s linear infinite;filter:drop-shadow(0 6px 10px var(--shadow-tint));}
+  .hero-visual{display:flex;align-items:center;justify-content:center;position:relative;}
+  .hero-badge-ring{width:100%;max-width:300px;aspect-ratio:1/1;border-radius:50%;background:var(--card);box-shadow:0 26px 0 -10px var(--pink-soft), 0 20px 46px var(--shadow-tint);display:flex;align-items:center;justify-content:center;padding:22px;position:relative;}
+  .hero-badge-ring::after{content:'';position:absolute;inset:0;border-radius:50%;border:3px dashed var(--lilac-soft);animation:spin 40s linear infinite;}
+  .hero-badge-img{width:100%;height:100%;object-fit:contain;animation:spin 26s linear infinite;filter:drop-shadow(0 6px 14px var(--shadow-tint));}
   @keyframes spin{ from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
 
   /* cards */
@@ -116,7 +116,7 @@
   footer{border-top:2px dashed var(--line);background:var(--bg-alt);margin-top:36px;}
   .footer-inner{max-width:1120px;margin:0 auto;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;}
   .footer-icons{display:flex;gap:16px;align-items:center;}
-  .footer-copy{text-align:center;font-size:11.5px;color:var(--ink-soft);padding:0 20px 12px;}
+  .footer-copy{font-size:11.5px;color:var(--ink-soft);margin:0;}
 
   /* forms */
   .field{display:block;margin-bottom:16px;}
@@ -218,7 +218,7 @@ function icon(name, size, color){
     clipboard:'<rect x="6" y="4" width="12" height="17" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/>',
     package:'<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
     treat:'<path d="M12 4c-4 3-7 6.5-7 10a7 7 0 0 0 14 0c0-3.5-3-7-7-10z"/>',
-    bag:'<path d="M6 9V7a6 6 0 0 1 12 0v2"/><rect x="3" y="9" width="18" height="12" rx="2"/>',
+    bag:'<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>',
     heart:'<path d="M12 21s-7-4.35-9.5-8.5C.5 8.5 3 4 7 4c2 0 3.5 1 5 3 1.5-2 3-3 5-3 4 0 6.5 4.5 4.5 8.5C19 16.65 12 21 12 21z"/>',
     sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     moon:'<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
@@ -261,6 +261,7 @@ var state = {
   adminTab: 'produtos',
   addingProduct: false,
   addingLocation: false,
+  confirmDeleteLocationId: null,
   authUser: null,
   authError: '',
   products: DEFAULT_PRODUCTS.slice(),
@@ -416,9 +417,8 @@ function sectionHero(){
         '</div>' +
         '<p class="hint" style="margin-top:16px;display:flex;align-items:center;gap:6px">'+icon('bag',14)+' Adicione produtos ao carrinho para montar sua encomenda</p>' +
       '</div>' +
-      '<div class="hero-photo-wrap">' +
-        '<div class="hero-photo"><img src="'+DEFAULT_PRODUCTS[0].photo+'" alt="Bombom de uva Leal ChocoArt"></div>' +
-        '<img class="hero-badge" src="'+LOGO_CIRCLE+'" alt="Selo Leal ChocoArt">' +
+      '<div class="hero-visual">' +
+        '<div class="hero-badge-ring"><img class="hero-badge-img" src="'+LOGO_CIRCLE+'" alt="Selo Leal ChocoArt"></div>' +
       '</div>' +
     '</div></section>';
 }
@@ -547,6 +547,20 @@ function renderConfirm(){
     '</div></div>';
 }
 
+function renderDeleteLocationModal(){
+  if (!state.confirmDeleteLocationId) return '';
+  var loc = getLocation(state.confirmDeleteLocationId);
+  var name = loc ? loc.name : 'esta localização';
+  return '<div class="modal-overlay" data-action="closeDeleteLocationBg"><div class="modal" style="text-align:center" data-stop="1">' +
+    '<div style="width:60px;height:60px;border-radius:50%;background:var(--pink-soft);display:flex;align-items:center;justify-content:center;margin:0 auto 18px">' + icon('trash',26,'#c94a6d') + '</div>' +
+    '<h2 style="font-size:22px;margin:0 0 10px">Excluir localização?</h2>' +
+    '<p style="font-size:14px;color:var(--ink-soft);line-height:1.7">Tem certeza que deseja excluir <strong>'+esc(name)+'</strong>? Essa ação não pode ser desfeita.</p>' +
+    '<div style="display:flex;gap:10px;margin-top:20px">' +
+      '<button class="btn-secondary" data-action="cancelDeleteLocation" style="flex:1;justify-content:center">Cancelar</button>' +
+      '<button class="btn-primary" data-action="confirmDeleteLocation" style="flex:1;justify-content:center;background:#e0537a;border-color:#7a1f38">Excluir</button>' +
+    '</div></div></div>';
+}
+
 /* ---------- header / footer ---------- */
 function renderHeader(){
   if (state.page === 'admin'){
@@ -562,7 +576,7 @@ function renderHeader(){
   return '<header>' +
     '<div class="header-inner"><a href="#topo">'+LogoImg()+'</a>' +
       '<nav class="desktop-nav">' + navHtml + CartButton() + '</nav>' +
-      '<div style="display:flex;align-items:center;gap:8px" class="mobile-row">' + CartButton() +
+      '<div class="mobile-row">' + CartButton() +
         '<button class="mobile-toggle" data-action="toggleMenu">' + icon(state.menuOpen ? 'close' : 'menu', 22) + '</button>' +
       '</div>' +
     '</div>' +
@@ -573,12 +587,12 @@ function renderHeader(){
 function renderFooter(){
   return '<footer>' +
     '<div class="footer-inner">' + LogoImg() +
+      '<p class="footer-copy">© '+new Date().getFullYear()+' Leal ChocoArt</p>' +
       '<div class="footer-icons">' +
         '<a href="https://www.instagram.com/lealchocoart/" target="_blank" rel="noopener" style="color:var(--primary-dark)">'+icon('instagram',18)+'</a>' +
         '<a href="https://wa.me/5500000000000" target="_blank" rel="noopener" style="color:var(--primary-dark)">'+icon('whatsapp',18)+'</a>' +
         '<button data-action="go" data-page="admin" class="btn-ghost">Admin</button>' +
       '</div></div>' +
-    '<p class="footer-copy">© '+new Date().getFullYear()+' Leal ChocoArt</p>' +
     '</footer>';
 }
 
@@ -738,7 +752,7 @@ function pageAdmin(){ if (FIREBASE_READY && !state.authUser) return pageAdminLog
 /* ---------- main render ---------- */
 function render(){
   var content = state.page === 'admin' ? pageAdmin() : sectionHero() + sectionProdutos() + sectionLocalizacao() + sectionContato();
-  document.getElementById('app').innerHTML = renderHeader() + '<main>' + content + '</main>' + renderFooter() + renderModal() + (state.confirmOpen ? renderConfirm() : '');
+  document.getElementById('app').innerHTML = renderHeader() + '<main>' + content + '</main>' + renderFooter() + renderModal() + (state.confirmOpen ? renderConfirm() : '') + renderDeleteLocationModal();
 }
 
 /* ---------- actions ---------- */
@@ -748,9 +762,11 @@ function closeModal(){ state.modalOpen = false; render(); }
 
 document.addEventListener('click', function(e){
   var stopEl = e.target.closest('[data-stop]');
-  var overlay = e.target.closest('[data-action="closeModalBg"], [data-action="closeConfirmBg"]');
+  var overlay = e.target.closest('[data-action="closeModalBg"], [data-action="closeConfirmBg"], [data-action="closeDeleteLocationBg"]');
   if (overlay && !stopEl){
-    if (overlay.dataset.action === 'closeModalBg') closeModal(); else { state.confirmOpen = false; render(); }
+    if (overlay.dataset.action === 'closeModalBg') closeModal();
+    else if (overlay.dataset.action === 'closeDeleteLocationBg') { state.confirmDeleteLocationId = null; render(); }
+    else { state.confirmOpen = false; render(); }
     return;
   }
   var el = e.target.closest('[data-action]');
@@ -807,11 +823,18 @@ document.addEventListener('click', function(e){
     render();
   }
   else if (action === 'removeLocation') {
-    var lrid = el.dataset.locid;
-    if (!confirm('Excluir esta localização? Essa ação não pode ser desfeita.')) return;
-    state.locations = state.locations.filter(function(x){ return x.id !== lrid; });
-    if (state.currentLocationId === lrid) { state.currentLocationId = null; dbSet('currentLocationId', null); }
-    dbRemove('locations/' + lrid);
+    state.confirmDeleteLocationId = el.dataset.locid;
+    render();
+  }
+  else if (action === 'cancelDeleteLocation') { state.confirmDeleteLocationId = null; render(); }
+  else if (action === 'confirmDeleteLocation') {
+    var lrid = state.confirmDeleteLocationId;
+    if (lrid){
+      state.locations = state.locations.filter(function(x){ return x.id !== lrid; });
+      if (state.currentLocationId === lrid) { state.currentLocationId = null; dbSet('currentLocationId', null); }
+      dbRemove('locations/' + lrid);
+    }
+    state.confirmDeleteLocationId = null;
     render();
   }
   else if (action === 'toggleProduced') {
