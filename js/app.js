@@ -82,9 +82,9 @@ var DEFAULT_PRODUCTS = [
   { id:'p2', name:'Pão de Mel', desc:'Massa macia de mel e especiarias, recheada com doce de leite.', ingredients:'Mel, canela, cravo, doce de leite artesanal, chocolate ao leite.', price:7.5, stock:15, available:true, photo:FALLBACK.paoDeMel }
 ];
 var DEFAULT_LOCATIONS = [
-  { id:'faculdade', name:'Faculdade', mapImage:FALLBACK.mapaFaculdade, pin:{ x:63, y:44, label:'Sala A24' }, ordersOnly:false },
-  { id:'condominio', name:'Condomínio', mapImage:null, pin:null, ordersOnly:false },
-  { id:'igreja', name:'Igreja', mapImage:null, pin:null, ordersOnly:true }
+  { id:'faculdade', name:'Faculdade', address:'', mapImage:FALLBACK.mapaFaculdade, pin:{ x:63, y:44, label:'Sala A24' }, ordersOnly:false },
+  { id:'condominio', name:'Condomínio', address:'', mapImage:null, pin:null, ordersOnly:false },
+  { id:'igreja', name:'Igreja', address:'', mapImage:null, pin:null, ordersOnly:true }
 ];
 
 /* ---------- schedule (agenda) ---------- */
@@ -92,9 +92,9 @@ var AGENDA_DAYS = 7;
 var WEEKDAY_LABELS = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
 var WEEKDAY_SHORT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 var DEFAULT_SCHEDULE_TEMPLATE = [
-  { id:'sch1', locationId:'faculdade', weekdays:[1,2,3,4,5], startTime:'09:20', endTime:'09:40' },
-  { id:'sch2', locationId:'faculdade', weekdays:[1,2,3,4,5], startTime:'11:40', endTime:'12:00' },
-  { id:'sch3', locationId:'condominio', weekdays:[0,1,2,3,4,5,6], startTime:'13:00', endTime:'22:00' }
+  { id:'sch1', locationId:'faculdade', weekdays:[1,2,3,4,5], startTime:'09:20', endTime:'09:40', order:0 },
+  { id:'sch2', locationId:'faculdade', weekdays:[1,2,3,4,5], startTime:'11:40', endTime:'12:00', order:1 },
+  { id:'sch3', locationId:'condominio', weekdays:[0,1,2,3,4,5,6], startTime:'13:00', endTime:'22:00', order:2 }
 ];
 
 /* ---------- app state ---------- */
@@ -109,6 +109,8 @@ var state = {
   addingScheduleRule: false,
   addingExtraSlot: false,
   confirmDeleteLocationId: null,
+  orderModalLocationId: null,
+  orderModalDate: null,
   authUser: null,
   authError: '',
   products: DEFAULT_PRODUCTS.slice(),
@@ -257,9 +259,10 @@ function uploadToStorage(path, file, onDone){
 
 /* ---------- decorative flourishes ---------- */
 function waveDivider(fillVar){
-  return '<svg viewBox="0 0 1200 80" preserveAspectRatio="none" style="width:100%;height:44px;display:block;position:relative">' +
+  return '<div style="position:absolute;left:0;bottom:-1px;width:100%;line-height:0;z-index:1">' +
+    '<svg viewBox="0 0 1200 80" preserveAspectRatio="none" style="width:100%;height:44px;display:block">' +
     '<path d="M0,32 C150,70 350,0 600,28 C850,56 1050,4 1200,34 L1200,80 L0,80 Z" style="fill:'+fillVar+'"></path>' +
-    '</svg>';
+    '</svg></div>';
 }
 
 /* ---------- small components ---------- */
@@ -377,7 +380,7 @@ function sectionProdutos(){
       stepper = '<button class="btn-secondary sm" data-action="cartInc" data-id="'+p.id+'">'+icon('plus',14)+' Adicionar</button>';
     }
     var stockNote = (orderable && p.stock !== undefined && p.stock !== null) ? '<p class="stock-note">'+p.stock+' disponíveis</p>' : '';
-    return '<div class="product-card fade-in">' +
+    return '<div class="product-card">' +
       '<div style="padding:10px">' + ProductPhoto(p) + '</div>' +
       '<div style="padding:4px 18px 20px">' +
       '<p style="font-family:\'Fredoka\',sans-serif;font-weight:600;font-size:18.5px;margin:0 0 5px;color:var(--ink)">'+esc(p.name)+'</p>' +
@@ -419,6 +422,7 @@ function sectionLocalizacao(){
     return '<div style="display:flex;align-items:center;gap:14px;background:var(--card);border:2px solid var(--line);border-radius:16px;padding:14px 18px">' +
       icon('mapPin',18,'var(--primary)') +
       '<div><p style="font-weight:700;font-size:14.5px;margin:0">'+esc(l.name)+'</p>' +
+      (l.address ? '<p style="font-size:12.5px;color:var(--ink-soft);margin:2px 0 0">'+esc(l.address)+'</p>' : '') +
       (l.ordersOnly ? '<p style="font-size:13px;color:var(--ink-soft);margin:2px 0 0">Somente encomendas</p>' : '') +
       '</div></div>';
   }).join('');
@@ -428,7 +432,7 @@ function sectionLocalizacao(){
     '<p class="section-label">'+icon('mapPin',14)+' Onde estamos</p>' +
     '<h2 style="font-size:28px;margin:0 0 22px">Localização de hoje</h2>' +
     StatusCard() +
-    (mapLoc ? MapWithPin(mapLoc, false) : '') +
+    (mapLoc && mapLoc.mapImage ? MapWithPin(mapLoc, false) : '') +
     '<p style="font-weight:700;font-size:12.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--pink);margin:36px 0 14px;display:flex;align-items:center;gap:6px">'+icon('calendar',13)+' Próximos dias de venda</p>' +
     AgendaTimeline(AGENDA_DAYS) +
     '<p style="font-weight:700;font-size:12.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--pink);margin:36px 0 14px">Todos os pontos de retirada</p>' +
@@ -443,7 +447,7 @@ function sectionContato(){
     '<h2 style="font-size:28px;margin:0 0 14px">Contato</h2>' +
     '<p style="font-size:15px;color:var(--ink-soft);line-height:1.7;margin:0 0 30px">Dúvidas, encomendas especiais ou parcerias? Fale direto com a Julia pelo WhatsApp ou acompanhe o dia a dia da confeitaria no Instagram.</p>' +
     '<div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap">' +
-      '<a class="btn-primary" href="https://wa.me/5500000000000" target="_blank" rel="noopener">'+icon('whatsapp',16)+' Conversar no WhatsApp</a>' +
+      '<a class="btn-primary" href="https://wa.me/5515998054872" target="_blank" rel="noopener">'+icon('whatsapp',16)+' Conversar no WhatsApp</a>' +
       '<a class="btn-secondary" href="https://www.instagram.com/lealchocoart/" target="_blank" rel="noopener">'+icon('instagram',16)+' Instagram</a>' +
     '</div></div></section>';
 }
@@ -453,11 +457,31 @@ function renderModal(){
   if (!state.modalOpen) return '';
   var items = cartItems();
   var slots = generateAgenda(AGENDA_DAYS);
-  var slotOptions = slots.map(function(s){
-    var isToday = s.date === todayStr();
-    var when = (isToday ? 'Hoje' : dateLabel(s.dateObj));
-    return '<option value="'+s.id+'">'+when+' · '+esc(s.locationName)+' · '+s.startTime+'–'+s.endTime+'</option>';
+
+  var locOrder = []; var seenLoc = {};
+  slots.forEach(function(s){ if (!seenLoc[s.locationId]){ seenLoc[s.locationId] = true; locOrder.push(s.locationId); } });
+  var selectedLocId = (state.orderModalLocationId && seenLoc[state.orderModalLocationId]) ? state.orderModalLocationId : '';
+  var locOptionsHtml = locOrder.map(function(locId){
+    var loc = getLocation(locId);
+    return '<option value="'+locId+'"'+(locId===selectedLocId?' selected':'')+'>'+esc(loc?loc.name:locId)+'</option>';
   }).join('');
+
+  var slotsForLoc = selectedLocId ? slots.filter(function(s){ return s.locationId === selectedLocId; }) : [];
+
+  var dateOrder = []; var seenDate = {}; var dateObjByDate = {};
+  slotsForLoc.forEach(function(s){ if (!seenDate[s.date]){ seenDate[s.date] = true; dateOrder.push(s.date); dateObjByDate[s.date] = s.dateObj; } });
+  var selectedDate = (state.orderModalDate && seenDate[state.orderModalDate]) ? state.orderModalDate : '';
+  var todayS = todayStr();
+  var dateOptionsHtml = dateOrder.map(function(d){
+    var when = (d === todayS ? 'Hoje' : dateLabel(dateObjByDate[d]));
+    return '<option value="'+d+'"'+(d===selectedDate?' selected':'')+'>'+when+'</option>';
+  }).join('');
+
+  var slotsForDate = selectedDate ? slotsForLoc.filter(function(s){ return s.date === selectedDate; }) : [];
+  var slotOptions = slotsForDate.map(function(s){
+    return '<option value="'+s.id+'">'+s.startTime+'–'+s.endTime+'</option>';
+  }).join('');
+
   var cartSummary = items.length === 0
     ? '<p class="hint" style="margin-bottom:16px">Seu carrinho está vazio. Volte aos produtos e adicione ao menos um item.</p>'
     : '<div class="cart-box" style="margin:0 0 20px">' +
@@ -474,12 +498,22 @@ function renderModal(){
       '<form id="orderForm" data-action="submitOrderForm">' +
         '<div class="field"><label>Nome</label><input class="input" id="f-nome" placeholder="Seu nome completo" required></div>' +
         '<div class="field"><label>Telefone</label><input class="input" id="f-telefone" placeholder="(15) 99999-0000" required></div>' +
-        '<div class="field"><label>Local e horário de retirada</label>' +
+        '<div class="field"><label>Local de retirada</label>' +
           (slots.length === 0
             ? '<p class="error-text" style="margin-top:0">Nenhum horário de retirada disponível nos próximos dias. Tente novamente mais tarde.</p>'
-            : '<select class="input" id="f-slot" required><option value="">Selecione um dia/local/horário</option>'+slotOptions+'</select>' +
-              '<p class="hint">Você retira o pedido dentro da faixa de horário escolhida.</p>') +
+            : '<select class="input" id="f-local" data-action="selectOrderLocation" required><option value="">Selecione um local</option>'+locOptionsHtml+'</select>') +
         '</div>' +
+        (slots.length > 0 ? '<div class="field"><label>Dia</label>' +
+          (selectedLocId
+            ? '<select class="input" id="f-dia" data-action="selectOrderDate" required><option value="">Selecione um dia</option>'+dateOptionsHtml+'</select>'
+            : '<select class="input" id="f-dia" disabled required><option value="">Selecione um local primeiro</option></select>') +
+        '</div>' : '') +
+        (slots.length > 0 ? '<div class="field"><label>Horário de retirada</label>' +
+          (selectedDate
+            ? '<select class="input" id="f-slot" required><option value="">Selecione um horário</option>'+slotOptions+'</select>' +
+              '<p class="hint">Você retira o pedido dentro da faixa de horário escolhida.</p>'
+            : '<select class="input" id="f-slot" disabled required><option value="">Selecione um dia primeiro</option></select>') +
+        '</div>' : '') +
         '<div class="field"><label>Observações</label><textarea class="input" id="f-observacoes" placeholder="Alguma preferência ou observação?"></textarea></div>' +
         '<p class="error-text" id="formError"></p>' +
         '<button type="submit" class="btn-primary" style="justify-content:center;width:100%" '+(items.length===0||slots.length===0?'disabled':'')+'>Enviar encomenda '+icon('heart',15)+'</button>' +
@@ -538,7 +572,7 @@ function renderFooter(){
       '<p class="footer-copy">© '+new Date().getFullYear()+' Leal ChocoArt</p>' +
       '<div class="footer-icons">' +
         '<a href="https://www.instagram.com/lealchocoart/" target="_blank" rel="noopener" style="color:var(--primary-dark)">'+icon('instagram',18)+'</a>' +
-        '<a href="https://wa.me/5500000000000" target="_blank" rel="noopener" style="color:var(--primary-dark)">'+icon('whatsapp',18)+'</a>' +
+        '<a href="https://wa.me/5515998054872" target="_blank" rel="noopener" style="color:var(--primary-dark)">'+icon('whatsapp',18)+'</a>' +
         '<button data-action="go" data-page="admin" class="btn-ghost">Admin</button>' +
       '</div></div>' +
     '</footer>';
@@ -650,6 +684,7 @@ function pageAdminPanel(){
       : '<div class="new-product-card">' +
           '<p style="font-weight:800;font-size:14.5px;margin:0 0 12px">Nova localização</p>' +
           '<div class="field"><label>Nome</label><input class="input" id="nl-nome" placeholder="Ex: Praça Central"></div>' +
+          '<div class="field"><label>Endereço (opcional)</label><input class="input" id="nl-endereco" placeholder="Ex: Rua das Flores, 123"></div>' +
           '<div style="display:flex;gap:10px">' +
             '<button class="btn-primary sm" data-action="createLocation">Salvar</button>' +
             '<button class="btn-ghost" data-action="toggleAddLocation">Cancelar</button>' +
@@ -662,6 +697,7 @@ function pageAdminPanel(){
           '<input class="input" style="flex:1;height:38px;font-weight:700" value="'+esc(l.name)+'" data-action="setLocName" data-locid="'+l.id+'">' +
           '<button data-action="removeLocation" data-locid="'+l.id+'" style="background:none;border:none;color:var(--ink-soft)" aria-label="Excluir localização">'+icon('trash',16)+'</button>' +
         '</div>' +
+        '<div class="field"><label>Endereço (opcional)</label><input class="input" placeholder="Ex: Rua das Flores, 123" value="'+esc(l.address||'')+'" data-action="setLocAddress" data-locid="'+l.id+'"></div>' +
         '<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);font-weight:700;margin-bottom:14px">' +
           '<input type="checkbox" data-action="toggleOrdersOnly" data-locid="'+l.id+'" '+(l.ordersOnly?'checked':'')+'> Somente encomendas (não entra na agenda de vendas)' +
         '</label>' +
@@ -737,10 +773,15 @@ function locationSelectOptions(selectedId){
   }).join('');
 }
 function ruleWeekdaysHtml(rule){
-  return '<div style="display:flex;gap:4px;flex-wrap:wrap">' + WEEKDAY_SHORT.map(function(lbl, idx){
+  return '<div class="wd-row">' + WEEKDAY_SHORT.map(function(lbl, idx){
     var active = rule.weekdays.indexOf(idx) !== -1;
     return '<button type="button" class="wd-pill '+(active?'active':'')+'" data-action="toggleRuleWeekday" data-ruleid="'+rule.id+'" data-wd="'+idx+'">'+lbl+'</button>';
   }).join('') + '</div>';
+}
+function sortedScheduleTemplate(){
+  return state.scheduleTemplate.map(function(r, idx){
+    return { rule:r, ord: (r.order !== undefined && r.order !== null) ? r.order : idx };
+  }).sort(function(a,b){ return a.ord - b.ord; }).map(function(x){ return x.rule; });
 }
 function generateAgendaAdmin(days){
   var out = [];
@@ -777,10 +818,15 @@ function pageAdminAgendaBody(){
         '</div>' +
       '</div>';
 
-  var rulesList = state.scheduleTemplate.length === 0
+  var sortedRules = sortedScheduleTemplate();
+  var rulesList = sortedRules.length === 0
     ? '<p style="color:var(--ink-soft);font-size:13.5px;margin-bottom:26px">Nenhuma regra cadastrada.</p>'
-    : '<div style="margin-bottom:26px">' + state.scheduleTemplate.map(function(r){
-        return '<div class="admin-row">' +
+    : '<div style="margin-bottom:26px">' + sortedRules.map(function(r, idx){
+        return '<div class="admin-row rule-row">' +
+          '<div class="rule-move">' +
+            '<button type="button" data-action="moveRuleUp" data-ruleid="'+r.id+'" '+(idx===0?'disabled':'')+' aria-label="Mover para cima">▲</button>' +
+            '<button type="button" data-action="moveRuleDown" data-ruleid="'+r.id+'" '+(idx===sortedRules.length-1?'disabled':'')+' aria-label="Mover para baixo">▼</button>' +
+          '</div>' +
           '<select class="input" style="width:150px;height:36px" data-action="setRuleLocation" data-ruleid="'+r.id+'">'+locationSelectOptions(r.locationId)+'</select>' +
           ruleWeekdaysHtml(r) +
           '<input class="input" type="time" style="width:110px;height:36px" value="'+r.startTime+'" data-action="setRuleStart" data-ruleid="'+r.id+'">' +
@@ -918,25 +964,98 @@ function pageAdminAnalyticsBody(){
   var maxWd = Math.max.apply(null, a.byWeekday.map(function(w){ return w.revenue; }).concat([1]));
   var wdHtml = a.byWeekday.map(function(w){ return barRow(w.label, currency(w.revenue), Math.round(w.revenue/maxWd*100)); }).join('');
 
+  function panel(title, iconName, bodyHtml){
+    return '<div class="dash-panel"><p class="dash-panel-title">'+icon(iconName,15,'var(--primary-dark)')+' '+title+'</p>' + bodyHtml + '</div>';
+  }
+
   return statTiles +
-    '<p style="font-weight:800;font-size:14.5px;margin:26px 0 12px">Produtos mais vendidos</p>' + productsHtml +
-    '<p style="font-weight:800;font-size:14.5px;margin:26px 0 12px">Clientes que mais compram</p>' + customersHtml +
-    '<p style="font-weight:800;font-size:14.5px;margin:26px 0 12px">Faturamento por local</p>' + locHtml +
-    '<p style="font-weight:800;font-size:14.5px;margin:26px 0 12px">Faturamento por dia da semana</p>' + wdHtml;
+    '<div class="dash-grid">' +
+      panel('Produtos mais vendidos', 'treat', productsHtml) +
+      panel('Clientes que mais compram', 'heart', customersHtml) +
+      panel('Faturamento por local', 'mapPin', locHtml) +
+      panel('Faturamento por dia da semana', 'calendar', wdHtml) +
+    '</div>';
 }
 
 function pageAdmin(){ if (FIREBASE_READY && !state.authUser) return pageAdminLogin(); return pageAdminPanel(); }
 
+/* ---------- DOM morphing (avoids full teardown/repaint "flash" on every render) ---------- */
+function morphSyncAttrs(oldEl, newEl){
+  var oldAttrs = oldEl.attributes;
+  for (var i = oldAttrs.length - 1; i >= 0; i--){
+    var name = oldAttrs[i].name;
+    if (!newEl.hasAttribute(name)) oldEl.removeAttribute(name);
+  }
+  var newAttrs = newEl.attributes;
+  for (var j = 0; j < newAttrs.length; j++){
+    var a = newAttrs[j];
+    if (oldEl.getAttribute(a.name) !== a.value) oldEl.setAttribute(a.name, a.value);
+  }
+}
+function morphNode(oldNode, newNode){
+  if (oldNode.nodeType !== newNode.nodeType || oldNode.nodeName !== newNode.nodeName){
+    oldNode.replaceWith(newNode);
+    return newNode;
+  }
+  if (oldNode.nodeType === Node.TEXT_NODE || oldNode.nodeType === Node.COMMENT_NODE){
+    if (oldNode.nodeValue !== newNode.nodeValue) oldNode.nodeValue = newNode.nodeValue;
+    return oldNode;
+  }
+  if (oldNode.nodeType !== Node.ELEMENT_NODE) return oldNode;
+
+  morphSyncAttrs(oldNode, newNode);
+  var tag = oldNode.tagName;
+  var focused = document.activeElement === oldNode;
+
+  if (tag === 'SELECT'){
+    morphChildren(oldNode, newNode);
+    if (!focused) oldNode.value = newNode.value;
+    return oldNode;
+  }
+  if (tag === 'INPUT'){
+    var type = (oldNode.getAttribute('type') || 'text').toLowerCase();
+    if (type === 'file') return oldNode;
+    if (!focused){
+      if (type === 'checkbox' || type === 'radio') oldNode.checked = newNode.hasAttribute('checked');
+      else { var newVal = newNode.hasAttribute('value') ? newNode.getAttribute('value') : ''; if (oldNode.value !== newVal) oldNode.value = newVal; }
+    }
+    return oldNode;
+  }
+  if (tag === 'TEXTAREA'){
+    if (!focused && oldNode.value !== newNode.textContent) oldNode.value = newNode.textContent;
+    return oldNode;
+  }
+  morphChildren(oldNode, newNode);
+  return oldNode;
+}
+function morphChildren(oldParent, newParent){
+  var oldChildren = Array.prototype.slice.call(oldParent.childNodes);
+  var newChildren = Array.prototype.slice.call(newParent.childNodes);
+  var max = Math.max(oldChildren.length, newChildren.length);
+  for (var i = 0; i < max; i++){
+    var o = oldChildren[i], n = newChildren[i];
+    if (!n){ if (o) oldParent.removeChild(o); continue; }
+    if (!o){ oldParent.appendChild(n); continue; }
+    morphNode(o, n);
+  }
+}
+function morphInto(container, html){
+  var tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  morphChildren(container, tmp);
+}
+
 /* ---------- main render ---------- */
 function render(){
   var content = state.page === 'admin' ? pageAdmin() : sectionHero() + sectionProdutos() + sectionLocalizacao() + sectionContato();
-  document.getElementById('app').innerHTML = renderHeader() + '<main>' + content + '</main>' + renderFooter() + renderModal() + (state.confirmOpen ? renderConfirm() : '') + renderDeleteLocationModal();
+  var html = renderHeader() + '<main>' + content + '</main>' + renderFooter() + renderModal() + (state.confirmOpen ? renderConfirm() : '') + renderDeleteLocationModal();
+  morphInto(document.getElementById('app'), html);
 }
 
 /* ---------- actions ---------- */
 function go(page){ state.page = page; state.menuOpen = false; state.authError = ''; render(); window.scrollTo({top:0}); }
-function openModal(){ if (cartCount() === 0) return; state.modalOpen = true; render(); }
-function closeModal(){ state.modalOpen = false; render(); }
+function openModal(){ if (cartCount() === 0) return; state.modalOpen = true; state.orderModalLocationId = null; state.orderModalDate = null; render(); }
+function closeModal(){ state.modalOpen = false; state.orderModalLocationId = null; state.orderModalDate = null; render(); }
 
 document.addEventListener('click', function(e){
   var stopEl = e.target.closest('[data-stop]');
@@ -991,6 +1110,7 @@ document.addEventListener('click', function(e){
     var newLoc = {
       id: 'loc' + Date.now(),
       name: lnome,
+      address: document.getElementById('nl-endereco').value.trim(),
       mapImage: null,
       pin: null,
       ordersOnly: false
@@ -1051,7 +1171,8 @@ document.addEventListener('click', function(e){
     var srStart = document.getElementById('sr-inicio').value;
     var srEnd = document.getElementById('sr-fim').value;
     if (!srLoc || srWd.length === 0 || !srStart || !srEnd){ alert('Selecione local, ao menos um dia da semana e horário.'); return; }
-    var newRule = { id:'sch'+Date.now(), locationId:srLoc, weekdays:srWd, startTime:srStart, endTime:srEnd };
+    var maxOrder = state.scheduleTemplate.reduce(function(m,r){ return Math.max(m, r.order||0); }, -1);
+    var newRule = { id:'sch'+Date.now(), locationId:srLoc, weekdays:srWd, startTime:srStart, endTime:srEnd, order: maxOrder+1 };
     state.scheduleTemplate.push(newRule);
     dbSet('scheduleTemplate/'+newRule.id, newRule);
     state.addingScheduleRule = false;
@@ -1061,6 +1182,15 @@ document.addEventListener('click', function(e){
     var srid = el.dataset.ruleid;
     state.scheduleTemplate = state.scheduleTemplate.filter(function(r){ return r.id !== srid; });
     dbRemove('scheduleTemplate/'+srid);
+    render();
+  }
+  else if (action === 'moveRuleUp' || action === 'moveRuleDown') {
+    var sorted = sortedScheduleTemplate();
+    var pos = sorted.findIndex(function(r){ return r.id === el.dataset.ruleid; });
+    var swapPos = action === 'moveRuleUp' ? pos - 1 : pos + 1;
+    if (pos === -1 || swapPos < 0 || swapPos >= sorted.length) return;
+    var tmp = sorted[pos]; sorted[pos] = sorted[swapPos]; sorted[swapPos] = tmp;
+    sorted.forEach(function(r, idx){ r.order = idx; dbSet('scheduleTemplate/'+r.id+'/order', idx); });
     render();
   }
   else if (action === 'toggleRuleWeekday') {
@@ -1122,13 +1252,16 @@ document.addEventListener('change', function(e){
   var el = e.target.closest('[data-action]');
   if (!el) return;
   var action = el.dataset.action;
-  if (action === 'setPrice') { var p = getProduct(el.dataset.id); if (p) { p.price = Number(el.value) || 0; dbSet('products/'+p.id+'/price', p.price); } }
+  if (action === 'selectOrderLocation') { state.orderModalLocationId = el.value; state.orderModalDate = null; render(); }
+  else if (action === 'selectOrderDate') { state.orderModalDate = el.value; render(); }
+  else if (action === 'setPrice') { var p = getProduct(el.dataset.id); if (p) { p.price = Number(el.value) || 0; dbSet('products/'+p.id+'/price', p.price); } }
   else if (action === 'setStock') { var ps = getProduct(el.dataset.id); if (ps) { ps.stock = Number(el.value) || 0; dbSet('products/'+ps.id+'/stock', ps.stock); render(); } }
   else if (action === 'setName') { var pn = getProduct(el.dataset.id); if (pn) { pn.name = el.value; dbSet('products/'+pn.id+'/name', pn.name); } }
   else if (action === 'setDesc') { var pd = getProduct(el.dataset.id); if (pd) { pd.desc = el.value; dbSet('products/'+pd.id+'/desc', pd.desc); } }
   else if (action === 'setIngredients') { var pi = getProduct(el.dataset.id); if (pi) { pi.ingredients = el.value; dbSet('products/'+pi.id+'/ingredients', pi.ingredients); } }
   else if (action === 'setOrderStatus') { var o = state.orders.find(function(x){ return x.id === el.dataset.id; }); if (o) { o.status = el.value; dbSet('orders/'+o.id+'/status', o.status); } }
   else if (action === 'setLocName') { var locn = getLocation(el.dataset.locid); if (locn) { locn.name = el.value; dbSet('locations/'+locn.id+'/name', locn.name); } render(); }
+  else if (action === 'setLocAddress') { var loca = getLocation(el.dataset.locid); if (loca) { loca.address = el.value; dbSet('locations/'+loca.id+'/address', loca.address); } }
   else if (action === 'setPinLabel') { var locl = getLocation(el.dataset.locid); if (locl && locl.pin) { locl.pin.label = el.value; dbSet('locations/'+locl.id+'/pin', locl.pin); } }
   else if (action === 'toggleOrdersOnly') { var loco = getLocation(el.dataset.locid); if (loco) { loco.ordersOnly = el.checked; dbSet('locations/'+loco.id+'/ordersOnly', loco.ordersOnly); } render(); }
   else if (action === 'setRuleLocation') { var ruleL = getScheduleRule(el.dataset.ruleid); if (ruleL) { ruleL.locationId = el.value; dbSet('scheduleTemplate/'+ruleL.id+'/locationId', ruleL.locationId); } render(); }
@@ -1197,6 +1330,8 @@ document.addEventListener('submit', function(e){
   });
   state.cart = {};
   state.modalOpen = false;
+  state.orderModalLocationId = null;
+  state.orderModalDate = null;
   state.confirmOpen = true;
   render();
 });
