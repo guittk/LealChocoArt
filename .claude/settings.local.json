@@ -3,7 +3,8 @@
     "allow": [
       "Bash(powershell -Command \"Get-Item 'C:\\\\Users\\\\guilherme.oliveira\\\\Downloads\\\\leal-chocoart.html' | Select-Object Length, LastWriteTime\")",
       "Bash(wc -l \"C:\\\\Users\\\\guilherme.oliveira\\\\Downloads\\\\leal-chocoart.html\")",
-      "Bash(node --check \"C:\\\\Users\\\\guilherme.oliveira\\\\Desktop\\\\LealChocoArt\\\\js\\\\app.js\")"
+      "Bash(node --check \"C:\\\\Users\\\\guilherme.oliveira\\\\Desktop\\\\LealChocoArt\\\\js\\\\app.js\")",
+      "Bash(node --check js/app.js)"
     ]
   }
 }

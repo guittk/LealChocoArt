@@ -249,12 +249,14 @@ function dbSet(path, value){ if (FIREBASE_READY) fbDb.ref(path).set(value).catch
 function dbRemove(path){ if (FIREBASE_READY) fbDb.ref(path).remove().catch(function(e){ console.error(e); }); }
 function dbPushOrder(order){ if (FIREBASE_READY) fbDb.ref('orders/' + order.id).set(order).catch(function(e){ console.error(e); }); }
 
-/* ---------- firebase: storage uploads ---------- */
+/* ---------- image upload: stored as base64 directly in Realtime Database (no Storage needed) ---------- */
 function uploadToStorage(path, file, onDone){
-  if (!fbStorage){ onDone(null); return; }
-  var ref = fbStorage.ref(path);
-  ref.put(file).then(function(snap){ return snap.ref.getDownloadURL(); }).then(function(url){ onDone(url); })
-    .catch(function(err){ console.error(err); onDone(null); });
+  if (!file){ onDone(null); return; }
+  if (file.size > 2 * 1024 * 1024){ alert('Imagem muito grande (máx. 2MB). Escolha uma imagem menor.'); onDone(null); return; }
+  var reader = new FileReader();
+  reader.onload = function(){ onDone(reader.result); };
+  reader.onerror = function(){ onDone(null); };
+  reader.readAsDataURL(file);
 }
 
 /* ---------- decorative flourishes ---------- */
