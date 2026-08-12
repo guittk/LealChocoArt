@@ -764,11 +764,11 @@ function pageAdminPanel(){
         '<div class="admin-row" style="margin-bottom:12px;background:transparent;border:none;padding:0">' +
         '<div class="thumb">' + (p.photo ? '<img src="'+p.photo+'">' : icon('treat',20,'var(--primary)')) +
           '<input class="thumb-upload" type="file" accept="image/*" data-action="uploadProductPhoto" data-id="'+p.id+'" title="Trocar imagem"></div>' +
-        '<input class="input" style="flex:1 1 140px;height:36px" value="'+esc(p.name)+'" data-action="setName" data-id="'+p.id+'">' +
-        '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Preço</label><input class="input" type="number" step="0.5" value="'+p.price+'" style="width:88px;height:34px" data-action="setPrice" data-id="'+p.id+'"></div>' +
-        '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Estoque</label><input class="input" type="number" step="1" value="'+(p.stock===undefined?'':p.stock)+'" style="width:78px;height:34px" data-action="setStock" data-id="'+p.id+'"></div>' +
-        '<button class="avail-toggle '+(p.available!==false?'avail-on':'avail-off')+'" data-action="toggleAvailable" data-id="'+p.id+'">'+(p.available!==false?'Disponível':'Indisponível')+'</button>' +
-        '<button data-action="removeProduct" data-id="'+p.id+'" style="background:none;border:none;color:var(--ink-soft)" aria-label="Remover produto">'+icon('trash',16)+'</button>' +
+        labeledField('Nome', '<input class="input" style="height:36px" value="'+esc(p.name)+'" data-action="setName" data-id="'+p.id+'">', 'flex:1 1 140px') +
+        labeledField('Preço', '<input class="input" type="number" step="0.5" value="'+p.price+'" style="width:88px;height:34px" data-action="setPrice" data-id="'+p.id+'">') +
+        labeledField('Estoque', '<input class="input" type="number" step="1" value="'+(p.stock===undefined?'':p.stock)+'" style="width:78px;height:34px" data-action="setStock" data-id="'+p.id+'">') +
+        '<button class="avail-toggle '+(p.available!==false?'avail-on':'avail-off')+'" data-action="toggleAvailable" data-id="'+p.id+'" style="align-self:center">'+(p.available!==false?'Disponível':'Indisponível')+'</button>' +
+        '<button data-action="removeProduct" data-id="'+p.id+'" style="background:none;border:none;color:var(--ink-soft);align-self:center" aria-label="Remover produto">'+icon('trash',16)+'</button>' +
         '</div>' +
         '<div class="field" style="margin-bottom:8px"><label>Descrição</label><textarea class="input" style="height:56px" data-action="setDesc" data-id="'+p.id+'">'+esc(p.desc)+'</textarea></div>' +
         '<div class="field" style="margin-bottom:0"><label>Ingredientes</label><textarea class="input" style="height:56px" data-action="setIngredients" data-id="'+p.id+'">'+esc(p.ingredients)+'</textarea></div>' +
@@ -1114,30 +1114,33 @@ function pageAdminAnalyticsBody(){
 }
 
 /* ---------- admin: financeiro (custos, receitas, metas de venda) ---------- */
+function labeledField(label, innerHtml, extraStyle){
+  return '<div style="display:flex;flex-direction:column;gap:2px'+(extraStyle?';'+extraStyle:'')+'"><label class="hint" style="margin:0">'+label+'</label>'+innerHtml+'</div>';
+}
 function ingredientRow(item){
   var d = itemUnitCostDisplay(item);
   return '<div class="admin-row">' +
-    '<input class="input" style="flex:1 1 140px;height:36px" value="'+esc(item.name)+'" data-action="setIngredientName" data-ingid="'+item.id+'">' +
-    '<select class="input" style="width:80px;height:36px" data-action="setIngredientUnit" data-ingid="'+item.id+'">' +
+    labeledField('Nome', '<input class="input" style="height:36px" value="'+esc(item.name)+'" data-action="setIngredientName" data-ingid="'+item.id+'">', 'flex:1 1 140px') +
+    labeledField('Unidade', '<select class="input" style="width:80px;height:36px" data-action="setIngredientUnit" data-ingid="'+item.id+'">' +
       ['g','ml','un'].map(function(u){ return '<option value="'+u+'"'+(item.unit===u?' selected':'')+'>'+u+'</option>'; }).join('') +
-    '</select>' +
-    '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Preço do pote (R$)</label><input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setIngredientPrice" data-ingid="'+item.id+'"></div>' +
-    '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Qtd. do pote</label><input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setIngredientQty" data-ingid="'+item.id+'"></div>' +
-    '<div style="font-size:12px;color:var(--ink-soft);min-width:120px">Custo/'+d.label+': <strong>'+currency(d.value)+'</strong></div>' +
-    '<button data-action="removeIngredient" data-ingid="'+item.id+'" style="background:none;border:none;color:var(--ink-soft);margin-left:auto" aria-label="Remover ingrediente">'+icon('trash',16)+'</button>' +
+    '</select>') +
+    labeledField('Preço do pote (R$)', '<input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setIngredientPrice" data-ingid="'+item.id+'">') +
+    labeledField('Qtd. do pote', '<input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setIngredientQty" data-ingid="'+item.id+'">') +
+    labeledField('Custo/'+d.label, '<div style="font-size:14px;font-weight:700;padding-top:6px">'+currency(d.value)+'</div>', 'min-width:100px') +
+    '<button data-action="removeIngredient" data-ingid="'+item.id+'" style="background:none;border:none;color:var(--ink-soft);margin-left:auto;align-self:center" aria-label="Remover ingrediente">'+icon('trash',16)+'</button>' +
     '</div>';
 }
 function packagingRow(item){
   var d = itemUnitCostDisplay(item);
   return '<div class="admin-row">' +
-    '<input class="input" style="flex:1 1 140px;height:36px" value="'+esc(item.name)+'" data-action="setPackagingName" data-packid="'+item.id+'">' +
-    '<select class="input" style="width:80px;height:36px" data-action="setPackagingUnit" data-packid="'+item.id+'">' +
+    labeledField('Nome', '<input class="input" style="height:36px" value="'+esc(item.name)+'" data-action="setPackagingName" data-packid="'+item.id+'">', 'flex:1 1 140px') +
+    labeledField('Unidade', '<select class="input" style="width:80px;height:36px" data-action="setPackagingUnit" data-packid="'+item.id+'">' +
       ['un','g','ml'].map(function(u){ return '<option value="'+u+'"'+(item.unit===u?' selected':'')+'>'+u+'</option>'; }).join('') +
-    '</select>' +
-    '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Preço do pacote (R$)</label><input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setPackagingPrice" data-packid="'+item.id+'"></div>' +
-    '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Qtd. no pacote</label><input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setPackagingQty" data-packid="'+item.id+'"></div>' +
-    '<div style="font-size:12px;color:var(--ink-soft);min-width:120px">Custo/'+d.label+': <strong>'+currency(d.value)+'</strong></div>' +
-    '<button data-action="removePackaging" data-packid="'+item.id+'" style="background:none;border:none;color:var(--ink-soft);margin-left:auto" aria-label="Remover embalagem">'+icon('trash',16)+'</button>' +
+    '</select>') +
+    labeledField('Preço do pacote (R$)', '<input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setPackagingPrice" data-packid="'+item.id+'">') +
+    labeledField('Qtd. no pacote', '<input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setPackagingQty" data-packid="'+item.id+'">') +
+    labeledField('Custo/'+d.label, '<div style="font-size:14px;font-weight:700;padding-top:6px">'+currency(d.value)+'</div>', 'min-width:100px') +
+    '<button data-action="removePackaging" data-packid="'+item.id+'" style="background:none;border:none;color:var(--ink-soft);margin-left:auto;align-self:center" aria-label="Remover embalagem">'+icon('trash',16)+'</button>' +
     '</div>';
 }
 function pageAdminFinanceIngredientsBody(){
