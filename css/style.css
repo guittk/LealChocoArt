@@ -179,6 +179,17 @@ textarea.input{height:70px;resize:vertical;padding-top:10px;}
 .thumb-upload{position:absolute;inset:0;opacity:0;cursor:pointer;}
 .new-product-card{background:var(--lilac-soft);border:2.5px dashed var(--primary);border-radius:22px;padding:18px 20px;margin-bottom:22px;}
 
+/* admin: financeiro */
+.fin-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.fin-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;}
+.fin-usage-scroll{overflow-x:auto;}
+.fin-usage-head, .fin-usage-row{display:grid;grid-template-columns:1.6fr 90px 90px 100px 100px 30px;gap:8px;min-width:520px;}
+.fin-usage-head{font-size:11px;font-weight:700;color:var(--ink-soft);padding:0 12px 4px;}
+.fin-usage-row{align-items:center;padding:8px 12px;}
+@media (max-width:640px){
+  .fin-grid-2, .fin-grid-3{grid-template-columns:1fr;}
+}
+
 .fade-in{animation:fadeIn .35s ease both;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px);} to{opacity:1;transform:translateY(0);}}
 

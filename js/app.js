@@ -1134,7 +1134,7 @@ function pageAdminFinanceIngredientsBody(){
     : '<div class="new-product-card">' +
         '<p style="font-weight:800;font-size:14.5px;margin:0 0 12px">Novo ingrediente</p>' +
         '<div class="field"><label>Nome</label><input class="input" id="ni-nome" placeholder="Ex: Chocolate belga 54%"></div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">' +
+        '<div class="fin-grid-3">' +
           '<div class="field"><label>Unidade</label><select class="input" id="ni-unidade"><option value="g">g</option><option value="ml">ml</option><option value="un">un</option></select></div>' +
           '<div class="field"><label>Preço do pote (R$)</label><input class="input" id="ni-preco" type="number" step="0.01" value="0"></div>' +
           '<div class="field"><label>Qtd. do pote</label><input class="input" id="ni-qtd" type="number" step="0.01" value="1"></div>' +
@@ -1155,7 +1155,7 @@ function pageAdminFinancePackagingBody(){
     : '<div class="new-product-card">' +
         '<p style="font-weight:800;font-size:14.5px;margin:0 0 12px">Nova embalagem</p>' +
         '<div class="field"><label>Nome</label><input class="input" id="np2-nome" placeholder="Ex: Saquinho celofane"></div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">' +
+        '<div class="fin-grid-3">' +
           '<div class="field"><label>Unidade</label><select class="input" id="np2-unidade"><option value="un">un</option><option value="g">g</option><option value="ml">ml</option></select></div>' +
           '<div class="field"><label>Preço do pacote (R$)</label><input class="input" id="np2-preco" type="number" step="0.01" value="0"></div>' +
           '<div class="field"><label>Qtd. no pacote</label><input class="input" id="np2-qtd" type="number" step="0.01" value="1"></div>' +
@@ -1184,15 +1184,14 @@ function recipeUsageTable(p, rows, kind){
   var qtyAction = kind === 'ingredient' ? 'setRecipeIngredientQty' : 'setRecipePackagingQty';
   var removeAction = kind === 'ingredient' ? 'removeRecipeIngredient' : 'removeRecipePackaging';
   var idKey = kind === 'ingredient' ? 'ingredientId' : 'packagingId';
-  var cols = '1.6fr 90px 90px 100px 100px 30px';
-  var head = '<div style="display:grid;grid-template-columns:'+cols+';gap:8px;font-size:11px;font-weight:700;color:var(--ink-soft);padding:0 12px 4px">' +
+  var head = '<div class="fin-usage-head">' +
     '<span>Produto</span><span>Valor</span><span>Quant. Total</span><span>Quant. Usada</span><span>Valor Receita</span><span></span></div>';
   var body = rows.map(function(u, idx){
     var item = kind === 'ingredient' ? getIngredient(u[idKey]) : getPackagingItem(u[idKey]);
     var options = kind === 'ingredient' ? ingredientUsageOptions(u[idKey]) : packagingUsageOptions(u[idKey]);
     var qtyUsed = Number(u.qty) || 0;
     var recipeValue = item ? itemUnitCost(item) * qtyUsed : 0;
-    return '<div class="admin-row" style="display:grid;grid-template-columns:'+cols+';gap:8px;align-items:center;padding:8px 12px">' +
+    return '<div class="admin-row fin-usage-row">' +
       '<select class="input" style="height:34px" data-action="'+selectAction+'" data-id="'+p.id+'" data-idx="'+idx+'">'+options+'</select>' +
       '<span style="font-size:13px">'+(item?currency(item.packagePrice):'—')+'</span>' +
       '<span style="font-size:13px">'+(item?item.packageQty:'—')+'</span>' +
@@ -1201,7 +1200,7 @@ function recipeUsageTable(p, rows, kind){
       '<button data-action="'+removeAction+'" data-id="'+p.id+'" data-idx="'+idx+'" style="background:none;border:none;color:var(--ink-soft)" aria-label="Remover">'+icon('trash',14)+'</button>' +
     '</div>';
   }).join('');
-  return head + body;
+  return '<div class="fin-usage-scroll">' + head + body + '</div>';
 }
 function recipeProductCard(p){
   var r = ensureRecipe(p);
@@ -1212,7 +1211,7 @@ function recipeProductCard(p){
   var profitColor = c.profit >= 0 ? 'var(--primary-dark)' : '#c0392b';
   return '<div class="admin-loc-card">' +
     '<p style="font-weight:800;font-size:15px;margin:0 0 14px">'+esc(p.name)+'</p>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px">' +
+    '<div class="fin-grid-3" style="margin-bottom:14px">' +
       '<div class="field" style="margin-bottom:0"><label>Quantidade por receita (rendimento)</label><input class="input" type="number" step="1" value="'+(r.yieldQty||1)+'" data-action="setRecipeYield" data-id="'+p.id+'"></div>' +
       '<div class="field" style="margin-bottom:0"><label>Unidades por pacote</label><input class="input" type="number" step="1" value="'+(r.unitsPerPackage||1)+'" data-action="setRecipeUnitsPerPackage" data-id="'+p.id+'"></div>' +
       '<div class="field" style="margin-bottom:0"><label>Valor de venda (R$)</label><input class="input" type="number" step="0.5" value="'+p.price+'" data-action="setPrice" data-id="'+p.id+'"></div>' +
@@ -1242,7 +1241,7 @@ function pageAdminFinanceGoalsBody(){
   var g = state.financialGoals;
   var results = computeSalesGoals();
   var formHtml = '<div class="admin-loc-card">' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">' +
+    '<div class="fin-grid-2">' +
       '<div class="field"><label>Quanto quer ganhar por mês (R$)</label><input class="input" type="number" step="50" value="'+(g.monthlyGoal||0)+'" data-action="setGoalMonthly"></div>' +
       '<div class="field"><label>Dias trabalhados por semana</label><input class="input" type="number" min="1" max="7" step="1" value="'+(g.daysPerWeek||0)+'" data-action="setGoalDays"></div>' +
     '</div>' +
@@ -1724,7 +1723,9 @@ document.addEventListener('click', function(e){
       if (pcItem) {
         pcItem.packagePrice = pcm.newPrice;
         if (!pcItem.priceHistory) pcItem.priceHistory = [];
-        pcItem.priceHistory.push({ date: todayStr(), price: pcm.newPrice });
+        var pcLast = pcItem.priceHistory[pcItem.priceHistory.length - 1];
+        if (pcLast && pcLast.date === todayStr()) pcLast.price = pcm.newPrice;
+        else pcItem.priceHistory.push({ date: todayStr(), price: pcm.newPrice });
         var pcColl = pcm.kind === 'ingredient' ? 'ingredients' : 'packagingItems';
         dbSet(pcColl + '/' + pcItem.id, pcItem);
       }
