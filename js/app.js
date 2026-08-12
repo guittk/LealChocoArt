@@ -1147,31 +1147,38 @@ function ingredientUsageOptions(selectedId){
 function packagingUsageOptions(selectedId){
   return state.packagingItems.map(function(i){ return '<option value="'+i.id+'"'+(i.id===selectedId?' selected':'')+'>'+esc(i.name)+'</option>'; }).join('');
 }
+function recipeUsageTable(p, rows, kind){
+  var items = kind === 'ingredient' ? state.ingredients : state.packagingItems;
+  if (items.length === 0) return '<p style="color:var(--ink-soft);font-size:12.5px">Cadastre '+(kind==='ingredient'?'ingredientes':'embalagens')+' primeiro.</p>';
+  if (rows.length === 0) return '<p style="color:var(--ink-soft);font-size:12.5px">'+(kind==='ingredient'?'Nenhum ingrediente':'Nenhuma embalagem')+' na receita.</p>';
+  var selectAction = kind === 'ingredient' ? 'setRecipeIngredient' : 'setRecipePackaging';
+  var qtyAction = kind === 'ingredient' ? 'setRecipeIngredientQty' : 'setRecipePackagingQty';
+  var removeAction = kind === 'ingredient' ? 'removeRecipeIngredient' : 'removeRecipePackaging';
+  var idKey = kind === 'ingredient' ? 'ingredientId' : 'packagingId';
+  var cols = '1.6fr 90px 90px 100px 100px 30px';
+  var head = '<div style="display:grid;grid-template-columns:'+cols+';gap:8px;font-size:11px;font-weight:700;color:var(--ink-soft);padding:0 12px 4px">' +
+    '<span>Produto</span><span>Valor</span><span>Quant. Total</span><span>Quant. Usada</span><span>Valor Receita</span><span></span></div>';
+  var body = rows.map(function(u, idx){
+    var item = kind === 'ingredient' ? getIngredient(u[idKey]) : getPackagingItem(u[idKey]);
+    var options = kind === 'ingredient' ? ingredientUsageOptions(u[idKey]) : packagingUsageOptions(u[idKey]);
+    var qtyUsed = Number(u.qty) || 0;
+    var recipeValue = item ? itemUnitCost(item) * qtyUsed : 0;
+    return '<div class="admin-row" style="display:grid;grid-template-columns:'+cols+';gap:8px;align-items:center;padding:8px 12px">' +
+      '<select class="input" style="height:34px" data-action="'+selectAction+'" data-id="'+p.id+'" data-idx="'+idx+'">'+options+'</select>' +
+      '<span style="font-size:13px">'+(item?currency(item.packagePrice):'—')+'</span>' +
+      '<span style="font-size:13px">'+(item?item.packageQty:'—')+'</span>' +
+      '<input class="input" type="number" step="0.01" style="height:34px" value="'+qtyUsed+'" data-action="'+qtyAction+'" data-id="'+p.id+'" data-idx="'+idx+'">' +
+      '<span style="font-size:13px;font-weight:700">'+currency(recipeValue)+'</span>' +
+      '<button data-action="'+removeAction+'" data-id="'+p.id+'" data-idx="'+idx+'" style="background:none;border:none;color:var(--ink-soft)" aria-label="Remover">'+icon('trash',14)+'</button>' +
+    '</div>';
+  }).join('');
+  return head + body;
+}
 function recipeProductCard(p){
   var r = ensureRecipe(p);
   var c = recipeCosts(p);
-  var ingRows = r.ingredientUsage.length === 0
-    ? '<p style="color:var(--ink-soft);font-size:12.5px">Nenhum ingrediente na receita.</p>'
-    : r.ingredientUsage.map(function(u, idx){
-        return '<div class="admin-row" style="padding:8px 12px">' +
-          (state.ingredients.length === 0
-            ? '<span style="font-size:12.5px;color:var(--ink-soft);flex:1">Cadastre ingredientes primeiro</span>'
-            : '<select class="input" style="flex:1;height:34px" data-action="setRecipeIngredient" data-id="'+p.id+'" data-idx="'+idx+'">'+ingredientUsageOptions(u.ingredientId)+'</select>') +
-          '<input class="input" type="number" step="0.01" style="width:110px;height:34px" placeholder="Qtd usada" value="'+(u.qty||0)+'" data-action="setRecipeIngredientQty" data-id="'+p.id+'" data-idx="'+idx+'">' +
-          '<button data-action="removeRecipeIngredient" data-id="'+p.id+'" data-idx="'+idx+'" style="background:none;border:none;color:var(--ink-soft)" aria-label="Remover">'+icon('trash',14)+'</button>' +
-        '</div>';
-      }).join('');
-  var packRows = r.packagingUsage.length === 0
-    ? '<p style="color:var(--ink-soft);font-size:12.5px">Nenhuma embalagem na receita.</p>'
-    : r.packagingUsage.map(function(u, idx){
-        return '<div class="admin-row" style="padding:8px 12px">' +
-          (state.packagingItems.length === 0
-            ? '<span style="font-size:12.5px;color:var(--ink-soft);flex:1">Cadastre embalagens primeiro</span>'
-            : '<select class="input" style="flex:1;height:34px" data-action="setRecipePackaging" data-id="'+p.id+'" data-idx="'+idx+'">'+packagingUsageOptions(u.packagingId)+'</select>') +
-          '<input class="input" type="number" step="0.01" style="width:110px;height:34px" placeholder="Qtd usada" value="'+(u.qty||0)+'" data-action="setRecipePackagingQty" data-id="'+p.id+'" data-idx="'+idx+'">' +
-          '<button data-action="removeRecipePackaging" data-id="'+p.id+'" data-idx="'+idx+'" style="background:none;border:none;color:var(--ink-soft)" aria-label="Remover">'+icon('trash',14)+'</button>' +
-        '</div>';
-      }).join('');
+  var ingRows = recipeUsageTable(p, r.ingredientUsage, 'ingredient');
+  var packRows = recipeUsageTable(p, r.packagingUsage, 'packaging');
 
   var profitColor = c.profit >= 0 ? 'var(--primary-dark)' : '#c0392b';
   return '<div class="admin-loc-card">' +
