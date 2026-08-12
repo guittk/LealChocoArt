@@ -297,10 +297,24 @@ function coll(name){ return fbDb.collection(APP_COLLECTION_PREFIX + name); }
 function objToArray(obj){ return Object.keys(obj || {}).map(function(id){ var v = obj[id] || {}; v.id = id; return v; }); }
 function snapToObj(snap){ var obj = {}; snap.forEach(function(doc){ obj[doc.id] = doc.data(); }); return obj; }
 function syncCollection(name, onData){
-  coll(name).onSnapshot(function(snap){ onData(snapToObj(snap)); }, function(e){ console.error(e); });
+  return coll(name).onSnapshot(function(snap){ onData(snapToObj(snap)); }, function(e){ console.error(e); });
 }
 function syncDoc(collectionName, docId, onData){
-  coll(collectionName).doc(docId).onSnapshot(function(snap){ onData(snap.exists ? snap.data() : null); }, function(e){ console.error(e); });
+  return coll(collectionName).doc(docId).onSnapshot(function(snap){ onData(snap.exists ? snap.data() : null); }, function(e){ console.error(e); });
+}
+var authGatedUnsubs = [];
+function attachAuthGatedSync(){
+  authGatedUnsubs.push(syncCollection('orders', function(val){
+    state.orders = objToArray(val).sort(function(a,b){ return Number(b.id) - Number(a.id); });
+    if (state.page === 'admin') render();
+  }));
+  authGatedUnsubs.push(syncCollection('ingredients', function(val){ state.ingredients = objToArray(val); render(); }));
+  authGatedUnsubs.push(syncCollection('packagingItems', function(val){ state.packagingItems = objToArray(val); render(); }));
+  authGatedUnsubs.push(syncDoc('settings', 'financeGoals', function(val){ if (val) state.financialGoals = val; render(); }));
+}
+function detachAuthGatedSync(){
+  authGatedUnsubs.forEach(function(unsub){ unsub(); });
+  authGatedUnsubs = [];
 }
 function initFirebaseSync(){
   if (!FIREBASE_READY) return;
@@ -309,14 +323,12 @@ function initFirebaseSync(){
   syncCollection('scheduleTemplate', function(val){ if (Object.keys(val).length) { state.scheduleTemplate = objToArray(val); render(); } });
   syncCollection('scheduleExceptions', function(val){ state.scheduleExceptions = objToArray(val); render(); });
   syncCollection('scheduleExtras', function(val){ state.scheduleExtras = objToArray(val); render(); });
-  syncCollection('orders', function(val){
-    state.orders = objToArray(val).sort(function(a,b){ return Number(b.id) - Number(a.id); });
-    if (state.page === 'admin') render();
+  fbAuth.onAuthStateChanged(function(user){
+    state.authUser = user;
+    detachAuthGatedSync();
+    if (user) attachAuthGatedSync();
+    render();
   });
-  syncCollection('ingredients', function(val){ state.ingredients = objToArray(val); render(); });
-  syncCollection('packagingItems', function(val){ state.packagingItems = objToArray(val); render(); });
-  syncDoc('settings', 'financeGoals', function(val){ if (val) state.financialGoals = val; render(); });
-  fbAuth.onAuthStateChanged(function(user){ state.authUser = user; render(); });
 }
 function seedCollectionIfEmpty(name, defaults){
   coll(name).limit(1).get().then(function(snap){
