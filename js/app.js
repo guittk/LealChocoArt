@@ -149,6 +149,12 @@ function itemUnitCost(item){
   var qty = Number(item && item.packageQty) || 0;
   return qty > 0 ? Number(item.packagePrice || 0) / qty : 0;
 }
+function itemUnitCostDisplay(item){
+  var unitCost = itemUnitCost(item);
+  if (item.unit === 'g') return { label: 'Kg', value: unitCost * 1000 };
+  if (item.unit === 'ml') return { label: 'L', value: unitCost * 1000 };
+  return { label: 'un', value: unitCost };
+}
 function ensureRecipe(p){
   if (!p.recipe) p.recipe = { yieldQty: 1, unitsPerPackage: 1, ingredientUsage: [], packagingUsage: [] };
   if (!p.recipe.ingredientUsage) p.recipe.ingredientUsage = [];
@@ -1074,7 +1080,7 @@ function pageAdminAnalyticsBody(){
 
 /* ---------- admin: financeiro (custos, receitas, metas de venda) ---------- */
 function ingredientRow(item){
-  var unitCost = itemUnitCost(item);
+  var d = itemUnitCostDisplay(item);
   return '<div class="admin-row">' +
     '<input class="input" style="flex:1 1 140px;height:36px" value="'+esc(item.name)+'" data-action="setIngredientName" data-ingid="'+item.id+'">' +
     '<select class="input" style="width:80px;height:36px" data-action="setIngredientUnit" data-ingid="'+item.id+'">' +
@@ -1082,12 +1088,12 @@ function ingredientRow(item){
     '</select>' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Preço do pote (R$)</label><input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setIngredientPrice" data-ingid="'+item.id+'"></div>' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Qtd. do pote</label><input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setIngredientQty" data-ingid="'+item.id+'"></div>' +
-    '<div style="font-size:12px;color:var(--ink-soft);min-width:120px">Custo/'+esc(item.unit||'un')+': <strong>'+currency(unitCost)+'</strong></div>' +
+    '<div style="font-size:12px;color:var(--ink-soft);min-width:120px">Custo/'+d.label+': <strong>'+currency(d.value)+'</strong></div>' +
     '<button data-action="removeIngredient" data-ingid="'+item.id+'" style="background:none;border:none;color:var(--ink-soft);margin-left:auto" aria-label="Remover ingrediente">'+icon('trash',16)+'</button>' +
     '</div>';
 }
 function packagingRow(item){
-  var unitCost = itemUnitCost(item);
+  var d = itemUnitCostDisplay(item);
   return '<div class="admin-row">' +
     '<input class="input" style="flex:1 1 140px;height:36px" value="'+esc(item.name)+'" data-action="setPackagingName" data-packid="'+item.id+'">' +
     '<select class="input" style="width:80px;height:36px" data-action="setPackagingUnit" data-packid="'+item.id+'">' +
@@ -1095,7 +1101,7 @@ function packagingRow(item){
     '</select>' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Preço do pacote (R$)</label><input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setPackagingPrice" data-packid="'+item.id+'"></div>' +
     '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Qtd. no pacote</label><input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setPackagingQty" data-packid="'+item.id+'"></div>' +
-    '<div style="font-size:12px;color:var(--ink-soft);min-width:120px">Custo/'+esc(item.unit||'un')+': <strong>'+currency(unitCost)+'</strong></div>' +
+    '<div style="font-size:12px;color:var(--ink-soft);min-width:120px">Custo/'+d.label+': <strong>'+currency(d.value)+'</strong></div>' +
     '<button data-action="removePackaging" data-packid="'+item.id+'" style="background:none;border:none;color:var(--ink-soft);margin-left:auto" aria-label="Remover embalagem">'+icon('trash',16)+'</button>' +
     '</div>';
 }
