@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## `firestore.rules` is shared with other apps — never deploy without syncing
+
+The Firebase project (`fb-general-stores`) hosts **3 apps**: this one, Ápice
+(`D:\- Projetos -\Thurgh\_GitHub\Apice`), and CentroComercial
+(`D:\- Projetos -\Thurgh\_GitHub\CentroComercial`, no git). Firestore rules are
+per-project, not per-app — `firebase deploy --only firestore:rules` from any
+one of the three repos replaces the **entire** database's ruleset, not just
+that app's collections. This already broke production once (2026-08-12): a
+deploy from Ápice wiped this app's `lealchocoart_*` rules and vice versa.
+
+**Fix in place**: `firestore.rules` here is kept **byte-identical** to
+`Apice/firestore.rules` and `CentroComercial/firestore.rules` — it contains
+all three apps' rules, one section per app. **Any edit to this file must be
+copied to the other two repos before the next deploy of any of them**, or the
+next deploy elsewhere will silently revert this app's rules. Storage rules
+live only in the Ápice repo (only it deploys Storage), and already reserve a
+public-read rule for this app's root-level asset files
+(`fbStorage.ref("Logo Circle.png")` etc. — single path segment, no folder).
+
 ## What this is
 
 Leal ChocoArt is a static storefront + admin panel for a small artisanal chocolate/pão-de-mel business. There is no build step, no framework, and no package manager — it's plain HTML/CSS/vanilla ES5-style JS, deployed to GitHub Pages at `lealchocoart.guilherme-oliveira.com` (see `CNAME`) from `github.com/guittk/LealChocoArt`.
