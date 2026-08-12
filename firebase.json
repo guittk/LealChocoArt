@@ -1,0 +1,15 @@
+{
+  "hosting": {
+    "target": "lealchocoart",
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "CNAME"
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}

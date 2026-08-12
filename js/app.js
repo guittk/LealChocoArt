@@ -59,7 +59,8 @@ function icon(name, size, color){
     calendar:'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
     chart:'<line x1="4" y1="20" x2="4" y2="12"/><line x1="10" y1="20" x2="10" y2="7"/><line x1="16" y1="20" x2="16" y2="4"/><line x1="2" y1="21" x2="22" y2="21"/>',
     bell:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
-    x:'<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'
+    x:'<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+    coin:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9.3c.3-1 1.2-1.5 2.5-1.5 1.6 0 2.8.8 2.8 2 0 1.5-1.4 1.8-2.8 2.2-1.4.4-2.8.8-2.8 2.3 0 1.2 1.2 2 2.8 2 1.3 0 2.2-.5 2.5-1.5"/><line x1="12" y1="6" x2="12" y2="7.8"/><line x1="12" y1="16.2" x2="12" y2="18"/>'
   };
   return '<svg class="icon" width="'+size+'" height="'+size+'" viewBox="0 0 24 24" style="color:'+color+'">'+(paths[name]||'')+'</svg>';
 }
@@ -103,10 +104,13 @@ var state = {
   modalOpen: false,
   confirmOpen: false,
   adminTab: 'produtos',
+  financeTab: 'ingredientes',
   addingProduct: false,
   addingLocation: false,
   addingScheduleRule: false,
   addingExtraSlot: false,
+  addingIngredient: false,
+  addingPackaging: false,
   confirmDeleteLocationId: null,
   orderModalLocationId: null,
   orderModalDate: null,
@@ -119,6 +123,9 @@ var state = {
   scheduleTemplate: DEFAULT_SCHEDULE_TEMPLATE.slice(),
   scheduleExceptions: [],
   scheduleExtras: [],
+  ingredients: [],
+  packagingItems: [],
+  financialGoals: { monthlyGoal: 0, daysPerWeek: 6, includeTax: true, meiMonthlyFee: 76.90 },
   adminReminders: [],
   notifPermission: (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported'
 };
@@ -134,6 +141,63 @@ function timeToMinutes(t){ var p=t.split(':'); return parseInt(p[0])*60+parseInt
 function nowMinutes(){ var d = new Date(); return d.getHours()*60+d.getMinutes(); }
 function getLocation(nameOrId){ return state.locations.find(function(l){ return l.name === nameOrId || l.id === nameOrId; }); }
 function getProduct(id){ return state.products.find(function(x){ return x.id === id; }); }
+function getIngredient(id){ return state.ingredients.find(function(x){ return x.id === id; }); }
+function getPackagingItem(id){ return state.packagingItems.find(function(x){ return x.id === id; }); }
+
+/* ---------- financeiro: custos, receitas e metas de venda ---------- */
+function itemUnitCost(item){
+  var qty = Number(item && item.packageQty) || 0;
+  return qty > 0 ? Number(item.packagePrice || 0) / qty : 0;
+}
+function ensureRecipe(p){
+  if (!p.recipe) p.recipe = { yieldQty: 1, unitsPerPackage: 1, ingredientUsage: [], packagingUsage: [] };
+  if (!p.recipe.ingredientUsage) p.recipe.ingredientUsage = [];
+  if (!p.recipe.packagingUsage) p.recipe.packagingUsage = [];
+  return p.recipe;
+}
+function recipeCosts(p){
+  var r = ensureRecipe(p);
+  var ingredientTotal = r.ingredientUsage.reduce(function(s,u){
+    var ing = getIngredient(u.ingredientId); if (!ing) return s;
+    return s + itemUnitCost(ing) * (Number(u.qty) || 0);
+  }, 0);
+  var yieldQty = Number(r.yieldQty) || 1;
+  var costPerUnit = ingredientTotal / yieldQty;
+  var packagingPerUnit = r.packagingUsage.reduce(function(s,u){
+    var pack = getPackagingItem(u.packagingId); if (!pack) return s;
+    return s + itemUnitCost(pack) * (Number(u.qty) || 0);
+  }, 0);
+  var unitsPerPackage = Number(r.unitsPerPackage) || 1;
+  var finalCostPerUnit = costPerUnit + packagingPerUnit;
+  var finalCostPerPackage = finalCostPerUnit * unitsPerPackage;
+  var sellPrice = Number(p.price) || 0;
+  var profit = sellPrice - finalCostPerPackage;
+  var marginPct = sellPrice > 0 ? (profit / sellPrice) * 100 : 0;
+  return {
+    ingredientTotal: ingredientTotal, yieldQty: yieldQty, costPerUnit: costPerUnit,
+    packagingPerUnit: packagingPerUnit, unitsPerPackage: unitsPerPackage,
+    finalCostPerUnit: finalCostPerUnit, finalCostPerPackage: finalCostPerPackage,
+    sellPrice: sellPrice, profit: profit, marginPct: marginPct
+  };
+}
+var WEEKS_PER_MONTH = 4.345;
+function computeSalesGoals(){
+  var g = state.financialGoals || {};
+  var monthlyGoal = Number(g.monthlyGoal) || 0;
+  var daysPerWeek = Number(g.daysPerWeek) || 0;
+  var meiMonthlyFee = Number(g.meiMonthlyFee) || 0;
+  return state.products.map(function(p){
+    var c = recipeCosts(p);
+    var scenarios = [true, false].map(function(withTax){
+      var targetProfit = monthlyGoal + (withTax ? meiMonthlyFee : 0);
+      var unitsMonth = c.profit > 0 ? Math.ceil(targetProfit / c.profit) : null;
+      var unitsWeek = (unitsMonth != null) ? Math.ceil(unitsMonth / WEEKS_PER_MONTH) : null;
+      var unitsDay = (unitsWeek != null && daysPerWeek > 0) ? Math.ceil(unitsWeek / daysPerWeek) : null;
+      return { withTax: withTax, targetProfit: targetProfit, unitsMonth: unitsMonth, unitsWeek: unitsWeek, unitsDay: unitsDay };
+    });
+    return { product: p, costs: c, scenarios: scenarios };
+  });
+}
 function isSoldOut(p){ return p.stock !== undefined && p.stock !== null && Number(p.stock) <= 0; }
 function isOrderable(p){ return p.available !== false && !isSoldOut(p); }
 function cartItems(){
@@ -215,10 +279,15 @@ function upgradeBrandAssets(){
 }
 
 /* ---------- firebase: realtime database sync ---------- */
+var APP_COLLECTION_PREFIX = 'lealchocoart_';
+function coll(name){ return fbDb.collection(APP_COLLECTION_PREFIX + name); }
 function objToArray(obj){ return Object.keys(obj || {}).map(function(id){ var v = obj[id] || {}; v.id = id; return v; }); }
 function snapToObj(snap){ var obj = {}; snap.forEach(function(doc){ obj[doc.id] = doc.data(); }); return obj; }
 function syncCollection(name, onData){
-  fbDb.collection(name).onSnapshot(function(snap){ onData(snapToObj(snap)); }, function(e){ console.error(e); });
+  coll(name).onSnapshot(function(snap){ onData(snapToObj(snap)); }, function(e){ console.error(e); });
+}
+function syncDoc(collectionName, docId, onData){
+  coll(collectionName).doc(docId).onSnapshot(function(snap){ onData(snap.exists ? snap.data() : null); }, function(e){ console.error(e); });
 }
 function initFirebaseSync(){
   if (!FIREBASE_READY) return;
@@ -231,13 +300,16 @@ function initFirebaseSync(){
     state.orders = objToArray(val).sort(function(a,b){ return Number(b.id) - Number(a.id); });
     if (state.page === 'admin') render();
   });
+  syncCollection('ingredients', function(val){ state.ingredients = objToArray(val); render(); });
+  syncCollection('packagingItems', function(val){ state.packagingItems = objToArray(val); render(); });
+  syncDoc('settings', 'financeGoals', function(val){ if (val) state.financialGoals = val; render(); });
   fbAuth.onAuthStateChanged(function(user){ state.authUser = user; render(); });
 }
 function seedCollectionIfEmpty(name, defaults){
-  fbDb.collection(name).limit(1).get().then(function(snap){
+  coll(name).limit(1).get().then(function(snap){
     if (snap.empty){
       var batch = fbDb.batch();
-      defaults.forEach(function(item){ batch.set(fbDb.collection(name).doc(item.id), item); });
+      defaults.forEach(function(item){ batch.set(coll(name).doc(item.id), item); });
       batch.commit();
     }
   });
@@ -254,7 +326,7 @@ function splitDbPath(path){ var parts = path.split('/'); return { collection: pa
 function dbSet(path, value){
   if (!FIREBASE_READY) return;
   var p = splitDbPath(path);
-  var docRef = fbDb.collection(p.collection).doc(p.id);
+  var docRef = coll(p.collection).doc(p.id);
   var write = p.field ? docRef.set(makeObjectAt(p.field, value), { merge: true }) : docRef.set(value);
   write.catch(function(e){ console.error(e); });
 }
@@ -262,11 +334,11 @@ function makeObjectAt(field, value){ var obj = {}; obj[field] = value; return ob
 function dbRemove(path){
   if (!FIREBASE_READY) return;
   var p = splitDbPath(path);
-  var docRef = fbDb.collection(p.collection).doc(p.id);
+  var docRef = coll(p.collection).doc(p.id);
   var write = p.field ? docRef.update(makeObjectAt(p.field, firebase.firestore.FieldValue.delete())) : docRef.delete();
   write.catch(function(e){ console.error(e); });
 }
-function dbPushOrder(order){ if (FIREBASE_READY) fbDb.collection('orders').doc(order.id).set(order).catch(function(e){ console.error(e); }); }
+function dbPushOrder(order){ if (FIREBASE_READY) coll('orders').doc(order.id).set(order).catch(function(e){ console.error(e); }); }
 
 /* ---------- image upload: stored as base64 directly in Realtime Database (no Storage needed) ---------- */
 function uploadToStorage(path, file, onDone){
@@ -621,7 +693,7 @@ function pageAdminLogin(){
 /* ---------- admin: panel ---------- */
 function pageAdminPanel(){
   var tab = state.adminTab;
-  var tabs = [['produtos','Produtos','package'],['encomendas','Encomendas','clipboard'],['agenda','Agenda','calendar'],['local','Locais','mapPin'],['analises','Análises','chart']];
+  var tabs = [['produtos','Produtos','package'],['encomendas','Encomendas','clipboard'],['agenda','Agenda','calendar'],['local','Locais','mapPin'],['analises','Análises','chart'],['financeiro','Financeiro','coin']];
   var tabsHtml = tabs.map(function(t){
     return '<button class="tab-btn '+(tab===t[0]?'active':'')+'" data-action="adminTab" data-tab="'+t[0]+'">'+icon(t[2],14)+' '+t[1]+'</button>';
   }).join('');
@@ -735,6 +807,8 @@ function pageAdminPanel(){
     body = pageAdminAgendaBody();
   } else if (tab === 'analises'){
     body = pageAdminAnalyticsBody();
+  } else if (tab === 'financeiro'){
+    body = pageAdminFinanceBody();
   }
 
   return '<div class="container" style="max-width:1000px;padding:40px 20px 80px">' +
@@ -996,6 +1070,184 @@ function pageAdminAnalyticsBody(){
       panel('Faturamento por local', 'mapPin', locHtml) +
       panel('Faturamento por dia da semana', 'calendar', wdHtml) +
     '</div>';
+}
+
+/* ---------- admin: financeiro (custos, receitas, metas de venda) ---------- */
+function ingredientRow(item){
+  var unitCost = itemUnitCost(item);
+  return '<div class="admin-row">' +
+    '<input class="input" style="flex:1 1 140px;height:36px" value="'+esc(item.name)+'" data-action="setIngredientName" data-ingid="'+item.id+'">' +
+    '<select class="input" style="width:80px;height:36px" data-action="setIngredientUnit" data-ingid="'+item.id+'">' +
+      ['g','ml','un'].map(function(u){ return '<option value="'+u+'"'+(item.unit===u?' selected':'')+'>'+u+'</option>'; }).join('') +
+    '</select>' +
+    '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Preço do pote (R$)</label><input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setIngredientPrice" data-ingid="'+item.id+'"></div>' +
+    '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Qtd. do pote</label><input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setIngredientQty" data-ingid="'+item.id+'"></div>' +
+    '<div style="font-size:12px;color:var(--ink-soft);min-width:120px">Custo/'+esc(item.unit||'un')+': <strong>'+currency(unitCost)+'</strong></div>' +
+    '<button data-action="removeIngredient" data-ingid="'+item.id+'" style="background:none;border:none;color:var(--ink-soft);margin-left:auto" aria-label="Remover ingrediente">'+icon('trash',16)+'</button>' +
+    '</div>';
+}
+function packagingRow(item){
+  var unitCost = itemUnitCost(item);
+  return '<div class="admin-row">' +
+    '<input class="input" style="flex:1 1 140px;height:36px" value="'+esc(item.name)+'" data-action="setPackagingName" data-packid="'+item.id+'">' +
+    '<select class="input" style="width:80px;height:36px" data-action="setPackagingUnit" data-packid="'+item.id+'">' +
+      ['un','g','ml'].map(function(u){ return '<option value="'+u+'"'+(item.unit===u?' selected':'')+'>'+u+'</option>'; }).join('') +
+    '</select>' +
+    '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Preço do pacote (R$)</label><input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setPackagingPrice" data-packid="'+item.id+'"></div>' +
+    '<div style="display:flex;flex-direction:column;gap:2px"><label class="hint" style="margin:0">Qtd. no pacote</label><input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setPackagingQty" data-packid="'+item.id+'"></div>' +
+    '<div style="font-size:12px;color:var(--ink-soft);min-width:120px">Custo/'+esc(item.unit||'un')+': <strong>'+currency(unitCost)+'</strong></div>' +
+    '<button data-action="removePackaging" data-packid="'+item.id+'" style="background:none;border:none;color:var(--ink-soft);margin-left:auto" aria-label="Remover embalagem">'+icon('trash',16)+'</button>' +
+    '</div>';
+}
+function pageAdminFinanceIngredientsBody(){
+  var addForm = !state.addingIngredient
+    ? '<button class="btn-secondary sm" data-action="toggleAddIngredient" style="margin-bottom:18px">'+icon('plus',14)+' Adicionar ingrediente</button>'
+    : '<div class="new-product-card">' +
+        '<p style="font-weight:800;font-size:14.5px;margin:0 0 12px">Novo ingrediente</p>' +
+        '<div class="field"><label>Nome</label><input class="input" id="ni-nome" placeholder="Ex: Chocolate belga 54%"></div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">' +
+          '<div class="field"><label>Unidade</label><select class="input" id="ni-unidade"><option value="g">g</option><option value="ml">ml</option><option value="un">un</option></select></div>' +
+          '<div class="field"><label>Preço do pote (R$)</label><input class="input" id="ni-preco" type="number" step="0.01" value="0"></div>' +
+          '<div class="field"><label>Qtd. do pote</label><input class="input" id="ni-qtd" type="number" step="0.01" value="1"></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:10px">' +
+          '<button class="btn-primary sm" data-action="createIngredient">Salvar</button>' +
+          '<button class="btn-ghost" data-action="toggleAddIngredient">Cancelar</button>' +
+        '</div>' +
+      '</div>';
+  var list = state.ingredients.length === 0
+    ? '<p style="color:var(--ink-soft);font-size:13.5px">Nenhum ingrediente cadastrado ainda.</p>'
+    : state.ingredients.map(ingredientRow).join('');
+  return addForm + list;
+}
+function pageAdminFinancePackagingBody(){
+  var addForm = !state.addingPackaging
+    ? '<button class="btn-secondary sm" data-action="toggleAddPackaging" style="margin-bottom:18px">'+icon('plus',14)+' Adicionar embalagem</button>'
+    : '<div class="new-product-card">' +
+        '<p style="font-weight:800;font-size:14.5px;margin:0 0 12px">Nova embalagem</p>' +
+        '<div class="field"><label>Nome</label><input class="input" id="np2-nome" placeholder="Ex: Saquinho celofane"></div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">' +
+          '<div class="field"><label>Unidade</label><select class="input" id="np2-unidade"><option value="un">un</option><option value="g">g</option><option value="ml">ml</option></select></div>' +
+          '<div class="field"><label>Preço do pacote (R$)</label><input class="input" id="np2-preco" type="number" step="0.01" value="0"></div>' +
+          '<div class="field"><label>Qtd. no pacote</label><input class="input" id="np2-qtd" type="number" step="0.01" value="1"></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:10px">' +
+          '<button class="btn-primary sm" data-action="createPackaging">Salvar</button>' +
+          '<button class="btn-ghost" data-action="toggleAddPackaging">Cancelar</button>' +
+        '</div>' +
+      '</div>';
+  var list = state.packagingItems.length === 0
+    ? '<p style="color:var(--ink-soft);font-size:13.5px">Nenhuma embalagem cadastrada ainda.</p>'
+    : state.packagingItems.map(packagingRow).join('');
+  return addForm + list;
+}
+function ingredientUsageOptions(selectedId){
+  return state.ingredients.map(function(i){ return '<option value="'+i.id+'"'+(i.id===selectedId?' selected':'')+'>'+esc(i.name)+'</option>'; }).join('');
+}
+function packagingUsageOptions(selectedId){
+  return state.packagingItems.map(function(i){ return '<option value="'+i.id+'"'+(i.id===selectedId?' selected':'')+'>'+esc(i.name)+'</option>'; }).join('');
+}
+function recipeProductCard(p){
+  var r = ensureRecipe(p);
+  var c = recipeCosts(p);
+  var ingRows = r.ingredientUsage.length === 0
+    ? '<p style="color:var(--ink-soft);font-size:12.5px">Nenhum ingrediente na receita.</p>'
+    : r.ingredientUsage.map(function(u, idx){
+        return '<div class="admin-row" style="padding:8px 12px">' +
+          (state.ingredients.length === 0
+            ? '<span style="font-size:12.5px;color:var(--ink-soft);flex:1">Cadastre ingredientes primeiro</span>'
+            : '<select class="input" style="flex:1;height:34px" data-action="setRecipeIngredient" data-id="'+p.id+'" data-idx="'+idx+'">'+ingredientUsageOptions(u.ingredientId)+'</select>') +
+          '<input class="input" type="number" step="0.01" style="width:110px;height:34px" placeholder="Qtd usada" value="'+(u.qty||0)+'" data-action="setRecipeIngredientQty" data-id="'+p.id+'" data-idx="'+idx+'">' +
+          '<button data-action="removeRecipeIngredient" data-id="'+p.id+'" data-idx="'+idx+'" style="background:none;border:none;color:var(--ink-soft)" aria-label="Remover">'+icon('trash',14)+'</button>' +
+        '</div>';
+      }).join('');
+  var packRows = r.packagingUsage.length === 0
+    ? '<p style="color:var(--ink-soft);font-size:12.5px">Nenhuma embalagem na receita.</p>'
+    : r.packagingUsage.map(function(u, idx){
+        return '<div class="admin-row" style="padding:8px 12px">' +
+          (state.packagingItems.length === 0
+            ? '<span style="font-size:12.5px;color:var(--ink-soft);flex:1">Cadastre embalagens primeiro</span>'
+            : '<select class="input" style="flex:1;height:34px" data-action="setRecipePackaging" data-id="'+p.id+'" data-idx="'+idx+'">'+packagingUsageOptions(u.packagingId)+'</select>') +
+          '<input class="input" type="number" step="0.01" style="width:110px;height:34px" placeholder="Qtd usada" value="'+(u.qty||0)+'" data-action="setRecipePackagingQty" data-id="'+p.id+'" data-idx="'+idx+'">' +
+          '<button data-action="removeRecipePackaging" data-id="'+p.id+'" data-idx="'+idx+'" style="background:none;border:none;color:var(--ink-soft)" aria-label="Remover">'+icon('trash',14)+'</button>' +
+        '</div>';
+      }).join('');
+
+  var profitColor = c.profit >= 0 ? 'var(--primary-dark)' : '#c0392b';
+  return '<div class="admin-loc-card">' +
+    '<p style="font-weight:800;font-size:15px;margin:0 0 14px">'+esc(p.name)+'</p>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px">' +
+      '<div class="field" style="margin-bottom:0"><label>Quantidade por receita (rendimento)</label><input class="input" type="number" step="1" value="'+(r.yieldQty||1)+'" data-action="setRecipeYield" data-id="'+p.id+'"></div>' +
+      '<div class="field" style="margin-bottom:0"><label>Unidades por pacote</label><input class="input" type="number" step="1" value="'+(r.unitsPerPackage||1)+'" data-action="setRecipeUnitsPerPackage" data-id="'+p.id+'"></div>' +
+      '<div class="field" style="margin-bottom:0"><label>Valor de venda (R$)</label><input class="input" type="number" step="0.5" value="'+p.price+'" data-action="setPrice" data-id="'+p.id+'"></div>' +
+    '</div>' +
+    '<p style="font-weight:700;font-size:12.5px;color:var(--ink-soft);margin:0 0 8px">Ingredientes usados na receita</p>' +
+    ingRows +
+    '<button class="btn-ghost sm" data-action="addRecipeIngredient" data-id="'+p.id+'" style="margin:8px 0 18px">'+icon('plus',12)+' Adicionar ingrediente</button>' +
+    '<p style="font-weight:700;font-size:12.5px;color:var(--ink-soft);margin:0 0 8px">Embalagem usada por unidade</p>' +
+    packRows +
+    '<button class="btn-ghost sm" data-action="addRecipePackaging" data-id="'+p.id+'" style="margin:8px 0 18px">'+icon('plus',12)+' Adicionar embalagem</button>' +
+    '<div style="background:var(--card-2);border-radius:16px;padding:14px 18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 20px">' +
+      '<div><p class="hint" style="margin:0">Custo total da receita</p><p style="font-weight:800;margin:2px 0 0">'+currency(c.ingredientTotal)+'</p></div>' +
+      '<div><p class="hint" style="margin:0">Custo por unidade</p><p style="font-weight:800;margin:2px 0 0">'+currency(c.costPerUnit)+'</p></div>' +
+      '<div><p class="hint" style="margin:0">Custo da embalagem</p><p style="font-weight:800;margin:2px 0 0">'+currency(c.packagingPerUnit)+'</p></div>' +
+      '<div><p class="hint" style="margin:0">Custo final por unidade</p><p style="font-weight:800;margin:2px 0 0">'+currency(c.finalCostPerUnit)+'</p></div>' +
+      (c.unitsPerPackage > 1 ? '<div><p class="hint" style="margin:0">Custo final por pacote</p><p style="font-weight:800;margin:2px 0 0">'+currency(c.finalCostPerPackage)+'</p></div>' : '') +
+      '<div><p class="hint" style="margin:0">Lucro</p><p style="font-weight:800;margin:2px 0 0;color:'+profitColor+'">'+currency(c.profit)+'</p></div>' +
+      '<div><p class="hint" style="margin:0">Margem de lucro</p><p style="font-weight:800;margin:2px 0 0;color:'+profitColor+'">'+c.marginPct.toFixed(1)+'%</p></div>' +
+    '</div>' +
+  '</div>';
+}
+function pageAdminFinanceRecipesBody(){
+  if (state.products.length === 0) return '<p style="color:var(--ink-soft);font-size:13.5px">Cadastre produtos na aba Produtos primeiro.</p>';
+  return state.products.map(recipeProductCard).join('');
+}
+function pageAdminFinanceGoalsBody(){
+  var g = state.financialGoals;
+  var results = computeSalesGoals();
+  var formHtml = '<div class="admin-loc-card">' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">' +
+      '<div class="field"><label>Quanto quer ganhar por mês (R$)</label><input class="input" type="number" step="50" value="'+(g.monthlyGoal||0)+'" data-action="setGoalMonthly"></div>' +
+      '<div class="field"><label>Dias trabalhados por semana</label><input class="input" type="number" min="1" max="7" step="1" value="'+(g.daysPerWeek||0)+'" data-action="setGoalDays"></div>' +
+    '</div>' +
+    '<div class="field"><label>Taxa MEI mensal (DAS, R$)</label><input class="input" type="number" step="1" value="'+(g.meiMonthlyFee||0)+'" data-action="setGoalMeiFee" style="max-width:200px"></div>' +
+    '<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);font-weight:700">' +
+      '<input type="checkbox" data-action="toggleGoalTax" '+(g.includeTax?'checked':'')+'> Considerar a taxa MEI na meta (o lucro precisa cobrir o imposto também)' +
+    '</label>' +
+  '</div>';
+
+  var cardsHtml = results.map(function(res){
+    var p = res.product, c = res.costs;
+    var scenario = res.scenarios.filter(function(s){ return s.withTax === !!g.includeTax; })[0];
+    var unreachable = c.profit <= 0;
+    return '<div class="dash-panel" style="margin-bottom:16px">' +
+      '<p class="dash-panel-title">'+icon('treat',15,'var(--primary-dark)')+' '+esc(p.name)+'</p>' +
+      (unreachable
+        ? '<p style="color:#c0392b;font-size:13px;font-weight:700">Esse produto está com lucro zero ou negativo ('+currency(c.profit)+'). Ajuste preço ou custos na aba Receitas & Custos.</p>'
+        : '<div class="stat-grid">' +
+            statTile('Por dia', scenario.unitsDay!=null?scenario.unitsDay+' un':'—', 'sun') +
+            statTile('Por semana', scenario.unitsWeek!=null?scenario.unitsWeek+' un':'—', 'calendar') +
+            statTile('Por mês', scenario.unitsMonth!=null?scenario.unitsMonth+' un':'—', 'chart') +
+          '</div>' +
+          '<p class="hint" style="margin-top:10px">Lucro por unidade: <strong>'+currency(c.profit)+'</strong> · Meta de lucro no mês'+(g.includeTax?' (com taxa MEI)':' (sem taxa MEI)')+': <strong>'+currency(scenario.targetProfit)+'</strong> · considerando vender somente este produto.</p>'
+      ) +
+    '</div>';
+  }).join('');
+
+  return formHtml + '<div style="height:8px"></div>' + cardsHtml;
+}
+function pageAdminFinanceBody(){
+  var ftab = state.financeTab;
+  var ftabs = [['ingredientes','Ingredientes'],['embalagens','Embalagens'],['receitas','Receitas & Custos'],['metas','Metas de Vendas']];
+  var tabsHtml = ftabs.map(function(t){
+    return '<button class="tab-btn '+(ftab===t[0]?'active':'')+'" data-action="financeTab" data-ftab="'+t[0]+'">'+t[1]+'</button>';
+  }).join('');
+  var body = '';
+  if (ftab === 'ingredientes') body = pageAdminFinanceIngredientsBody();
+  else if (ftab === 'embalagens') body = pageAdminFinancePackagingBody();
+  else if (ftab === 'receitas') body = pageAdminFinanceRecipesBody();
+  else if (ftab === 'metas') body = pageAdminFinanceGoalsBody();
+  return '<div class="tab-row" style="margin-bottom:18px">' + tabsHtml + '</div><div>' + body + '</div>';
 }
 
 function pageAdmin(){ if (FIREBASE_READY && !state.authUser) return pageAdminLogin(); return pageAdminPanel(); }
@@ -1267,6 +1519,85 @@ document.addEventListener('click', function(e){
     if (typeof Notification === 'undefined') return;
     Notification.requestPermission().then(function(perm){ state.notifPermission = perm; render(); });
   }
+  else if (action === 'financeTab') { state.financeTab = el.dataset.ftab; render(); }
+  else if (action === 'toggleAddIngredient') { state.addingIngredient = !state.addingIngredient; render(); }
+  else if (action === 'createIngredient') {
+    var iname = document.getElementById('ni-nome').value.trim();
+    if (!iname) { alert('Informe o nome do ingrediente.'); return; }
+    var newIng = {
+      id: 'ing' + Date.now(), name: iname,
+      unit: document.getElementById('ni-unidade').value,
+      packagePrice: Number(document.getElementById('ni-preco').value) || 0,
+      packageQty: Number(document.getElementById('ni-qtd').value) || 1
+    };
+    state.ingredients.push(newIng);
+    dbSet('ingredients/' + newIng.id, newIng);
+    state.addingIngredient = false;
+    render();
+  }
+  else if (action === 'removeIngredient') {
+    var iid = el.dataset.ingid;
+    state.ingredients = state.ingredients.filter(function(x){ return x.id !== iid; });
+    dbRemove('ingredients/' + iid);
+    render();
+  }
+  else if (action === 'toggleAddPackaging') { state.addingPackaging = !state.addingPackaging; render(); }
+  else if (action === 'createPackaging') {
+    var pkname = document.getElementById('np2-nome').value.trim();
+    if (!pkname) { alert('Informe o nome da embalagem.'); return; }
+    var newPack = {
+      id: 'pack' + Date.now(), name: pkname,
+      unit: document.getElementById('np2-unidade').value,
+      packagePrice: Number(document.getElementById('np2-preco').value) || 0,
+      packageQty: Number(document.getElementById('np2-qtd').value) || 1
+    };
+    state.packagingItems.push(newPack);
+    dbSet('packagingItems/' + newPack.id, newPack);
+    state.addingPackaging = false;
+    render();
+  }
+  else if (action === 'removePackaging') {
+    var pkid = el.dataset.packid;
+    state.packagingItems = state.packagingItems.filter(function(x){ return x.id !== pkid; });
+    dbRemove('packagingItems/' + pkid);
+    render();
+  }
+  else if (action === 'addRecipeIngredient') {
+    var rip = getProduct(el.dataset.id);
+    if (rip) {
+      var rr = ensureRecipe(rip);
+      rr.ingredientUsage.push({ ingredientId: state.ingredients.length ? state.ingredients[0].id : '', qty: 0 });
+      dbSet('products/' + rip.id + '/recipe', rr);
+    }
+    render();
+  }
+  else if (action === 'removeRecipeIngredient') {
+    var rrp = getProduct(el.dataset.id);
+    if (rrp) {
+      var rri = ensureRecipe(rrp);
+      rri.ingredientUsage.splice(Number(el.dataset.idx), 1);
+      dbSet('products/' + rrp.id + '/recipe', rri);
+    }
+    render();
+  }
+  else if (action === 'addRecipePackaging') {
+    var rpp = getProduct(el.dataset.id);
+    if (rpp) {
+      var rp2 = ensureRecipe(rpp);
+      rp2.packagingUsage.push({ packagingId: state.packagingItems.length ? state.packagingItems[0].id : '', qty: 0 });
+      dbSet('products/' + rpp.id + '/recipe', rp2);
+    }
+    render();
+  }
+  else if (action === 'removeRecipePackaging') {
+    var rpr = getProduct(el.dataset.id);
+    if (rpr) {
+      var rp3 = ensureRecipe(rpr);
+      rp3.packagingUsage.splice(Number(el.dataset.idx), 1);
+      dbSet('products/' + rpr.id + '/recipe', rp3);
+    }
+    render();
+  }
 });
 
 document.addEventListener('change', function(e){
@@ -1304,6 +1635,24 @@ document.addEventListener('change', function(e){
       render();
     });
   }
+  else if (action === 'setIngredientName') { var sin = getIngredient(el.dataset.ingid); if (sin) { sin.name = el.value; dbSet('ingredients/'+sin.id+'/name', sin.name); } }
+  else if (action === 'setIngredientUnit') { var siu = getIngredient(el.dataset.ingid); if (siu) { siu.unit = el.value; dbSet('ingredients/'+siu.id+'/unit', siu.unit); } render(); }
+  else if (action === 'setIngredientPrice') { var sip = getIngredient(el.dataset.ingid); if (sip) { sip.packagePrice = Number(el.value) || 0; dbSet('ingredients/'+sip.id+'/packagePrice', sip.packagePrice); } render(); }
+  else if (action === 'setIngredientQty') { var siq = getIngredient(el.dataset.ingid); if (siq) { siq.packageQty = Number(el.value) || 0; dbSet('ingredients/'+siq.id+'/packageQty', siq.packageQty); } render(); }
+  else if (action === 'setPackagingName') { var spn = getPackagingItem(el.dataset.packid); if (spn) { spn.name = el.value; dbSet('packagingItems/'+spn.id+'/name', spn.name); } }
+  else if (action === 'setPackagingUnit') { var spu = getPackagingItem(el.dataset.packid); if (spu) { spu.unit = el.value; dbSet('packagingItems/'+spu.id+'/unit', spu.unit); } render(); }
+  else if (action === 'setPackagingPrice') { var spp = getPackagingItem(el.dataset.packid); if (spp) { spp.packagePrice = Number(el.value) || 0; dbSet('packagingItems/'+spp.id+'/packagePrice', spp.packagePrice); } render(); }
+  else if (action === 'setPackagingQty') { var spq = getPackagingItem(el.dataset.packid); if (spq) { spq.packageQty = Number(el.value) || 0; dbSet('packagingItems/'+spq.id+'/packageQty', spq.packageQty); } render(); }
+  else if (action === 'setRecipeYield') { var ryp = getProduct(el.dataset.id); if (ryp) { var ry = ensureRecipe(ryp); ry.yieldQty = Number(el.value) || 1; dbSet('products/'+ryp.id+'/recipe', ry); } render(); }
+  else if (action === 'setRecipeUnitsPerPackage') { var rup = getProduct(el.dataset.id); if (rup) { var ru = ensureRecipe(rup); ru.unitsPerPackage = Number(el.value) || 1; dbSet('products/'+rup.id+'/recipe', ru); } render(); }
+  else if (action === 'setRecipeIngredient') { var sri = getProduct(el.dataset.id); if (sri) { var sr = ensureRecipe(sri); sr.ingredientUsage[Number(el.dataset.idx)].ingredientId = el.value; dbSet('products/'+sri.id+'/recipe', sr); } render(); }
+  else if (action === 'setRecipeIngredientQty') { var sriq = getProduct(el.dataset.id); if (sriq) { var srq = ensureRecipe(sriq); srq.ingredientUsage[Number(el.dataset.idx)].qty = Number(el.value) || 0; dbSet('products/'+sriq.id+'/recipe', srq); } render(); }
+  else if (action === 'setRecipePackaging') { var srp = getProduct(el.dataset.id); if (srp) { var sp = ensureRecipe(srp); sp.packagingUsage[Number(el.dataset.idx)].packagingId = el.value; dbSet('products/'+srp.id+'/recipe', sp); } render(); }
+  else if (action === 'setRecipePackagingQty') { var srpq = getProduct(el.dataset.id); if (srpq) { var spq2 = ensureRecipe(srpq); spq2.packagingUsage[Number(el.dataset.idx)].qty = Number(el.value) || 0; dbSet('products/'+srpq.id+'/recipe', spq2); } render(); }
+  else if (action === 'setGoalMonthly') { state.financialGoals.monthlyGoal = Number(el.value) || 0; dbSet('settings/financeGoals', state.financialGoals); render(); }
+  else if (action === 'setGoalDays') { state.financialGoals.daysPerWeek = Number(el.value) || 0; dbSet('settings/financeGoals', state.financialGoals); render(); }
+  else if (action === 'setGoalMeiFee') { state.financialGoals.meiMonthlyFee = Number(el.value) || 0; dbSet('settings/financeGoals', state.financialGoals); render(); }
+  else if (action === 'toggleGoalTax') { state.financialGoals.includeTax = el.checked; dbSet('settings/financeGoals', state.financialGoals); render(); }
 });
 
 document.addEventListener('submit', function(e){
