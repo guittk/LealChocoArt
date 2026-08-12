@@ -2,13 +2,12 @@
    FIREBASE
 ========================================================= */
 var firebaseConfig = {
-  apiKey: "AIzaSyARuEqZgWESVVSKtv5fq4rLjN_AM5IZFIc",
-  authDomain: "lealchocoart-dc1a4.firebaseapp.com",
-  databaseURL: "https://lealchocoart-dc1a4-default-rtdb.firebaseio.com",
-  projectId: "lealchocoart-dc1a4",
-  storageBucket: "lealchocoart-dc1a4.firebasestorage.app",
-  messagingSenderId: "1002811538630",
-  appId: "1:1002811538630:web:c7be4f0114f5a181076bc7"
+  apiKey: "AIzaSyDOQZJQiltlQKIIIiYki_JQinAV4lX0m3E",
+  authDomain: "fb-general-stores.firebaseapp.com",
+  projectId: "fb-general-stores",
+  storageBucket: "fb-general-stores.firebasestorage.app",
+  messagingSenderId: "780236289961",
+  appId: "1:780236289961:web:c4d6ce274d49645d84b6b8"
 };
 
 var ASSET_FILES = {
@@ -24,7 +23,7 @@ var fbAuth = null, fbDb = null, fbStorage = null;
 try {
   firebase.initializeApp(firebaseConfig);
   fbAuth = firebase.auth();
-  fbDb = firebase.database();
+  fbDb = firebase.firestore();
   fbStorage = firebase.storage();
   FIREBASE_READY = true;
 } catch (err) { console.warn('Firebase não inicializado:', err); }
@@ -217,37 +216,57 @@ function upgradeBrandAssets(){
 
 /* ---------- firebase: realtime database sync ---------- */
 function objToArray(obj){ return Object.keys(obj || {}).map(function(id){ var v = obj[id] || {}; v.id = id; return v; }); }
+function snapToObj(snap){ var obj = {}; snap.forEach(function(doc){ obj[doc.id] = doc.data(); }); return obj; }
+function syncCollection(name, onData){
+  fbDb.collection(name).onSnapshot(function(snap){ onData(snapToObj(snap)); }, function(e){ console.error(e); });
+}
 function initFirebaseSync(){
   if (!FIREBASE_READY) return;
-  fbDb.ref('products').on('value', function(snap){ var val = snap.val(); if (val) { state.products = objToArray(val); render(); } });
-  fbDb.ref('locations').on('value', function(snap){ var val = snap.val(); if (val) { state.locations = objToArray(val); render(); } });
-  fbDb.ref('scheduleTemplate').on('value', function(snap){ var val = snap.val(); if (val) { state.scheduleTemplate = objToArray(val); render(); } });
-  fbDb.ref('scheduleExceptions').on('value', function(snap){ var val = snap.val(); state.scheduleExceptions = val ? objToArray(val) : []; render(); });
-  fbDb.ref('scheduleExtras').on('value', function(snap){ var val = snap.val(); state.scheduleExtras = val ? objToArray(val) : []; render(); });
-  fbDb.ref('orders').on('value', function(snap){
-    var val = snap.val();
+  syncCollection('products', function(val){ if (Object.keys(val).length) { state.products = objToArray(val); render(); } });
+  syncCollection('locations', function(val){ if (Object.keys(val).length) { state.locations = objToArray(val); render(); } });
+  syncCollection('scheduleTemplate', function(val){ if (Object.keys(val).length) { state.scheduleTemplate = objToArray(val); render(); } });
+  syncCollection('scheduleExceptions', function(val){ state.scheduleExceptions = objToArray(val); render(); });
+  syncCollection('scheduleExtras', function(val){ state.scheduleExtras = objToArray(val); render(); });
+  syncCollection('orders', function(val){
     state.orders = objToArray(val).sort(function(a,b){ return Number(b.id) - Number(a.id); });
     if (state.page === 'admin') render();
   });
   fbAuth.onAuthStateChanged(function(user){ state.authUser = user; render(); });
 }
+function seedCollectionIfEmpty(name, defaults){
+  fbDb.collection(name).limit(1).get().then(function(snap){
+    if (snap.empty){
+      var batch = fbDb.batch();
+      defaults.forEach(function(item){ batch.set(fbDb.collection(name).doc(item.id), item); });
+      batch.commit();
+    }
+  });
+}
 function seedFirebaseIfEmpty(){
   if (!FIREBASE_READY) return;
   setTimeout(function(){
-    fbDb.ref('products').once('value', function(snap){
-      if (!snap.val()){ var obj = {}; DEFAULT_PRODUCTS.forEach(function(p){ obj[p.id] = p; }); fbDb.ref('products').set(obj); }
-    });
-    fbDb.ref('locations').once('value', function(snap){
-      if (!snap.val()){ var obj = {}; DEFAULT_LOCATIONS.forEach(function(l){ obj[l.id] = l; }); fbDb.ref('locations').set(obj); }
-    });
-    fbDb.ref('scheduleTemplate').once('value', function(snap){
-      if (!snap.val()){ var obj = {}; DEFAULT_SCHEDULE_TEMPLATE.forEach(function(r){ obj[r.id] = r; }); fbDb.ref('scheduleTemplate').set(obj); }
-    });
+    seedCollectionIfEmpty('products', DEFAULT_PRODUCTS);
+    seedCollectionIfEmpty('locations', DEFAULT_LOCATIONS);
+    seedCollectionIfEmpty('scheduleTemplate', DEFAULT_SCHEDULE_TEMPLATE);
   }, 900);
 }
-function dbSet(path, value){ if (FIREBASE_READY) fbDb.ref(path).set(value).catch(function(e){ console.error(e); }); }
-function dbRemove(path){ if (FIREBASE_READY) fbDb.ref(path).remove().catch(function(e){ console.error(e); }); }
-function dbPushOrder(order){ if (FIREBASE_READY) fbDb.ref('orders/' + order.id).set(order).catch(function(e){ console.error(e); }); }
+function splitDbPath(path){ var parts = path.split('/'); return { collection: parts[0], id: parts[1], field: parts[2] }; }
+function dbSet(path, value){
+  if (!FIREBASE_READY) return;
+  var p = splitDbPath(path);
+  var docRef = fbDb.collection(p.collection).doc(p.id);
+  var write = p.field ? docRef.set(makeObjectAt(p.field, value), { merge: true }) : docRef.set(value);
+  write.catch(function(e){ console.error(e); });
+}
+function makeObjectAt(field, value){ var obj = {}; obj[field] = value; return obj; }
+function dbRemove(path){
+  if (!FIREBASE_READY) return;
+  var p = splitDbPath(path);
+  var docRef = fbDb.collection(p.collection).doc(p.id);
+  var write = p.field ? docRef.update(makeObjectAt(p.field, firebase.firestore.FieldValue.delete())) : docRef.delete();
+  write.catch(function(e){ console.error(e); });
+}
+function dbPushOrder(order){ if (FIREBASE_READY) fbDb.collection('orders').doc(order.id).set(order).catch(function(e){ console.error(e); }); }
 
 /* ---------- image upload: stored as base64 directly in Realtime Database (no Storage needed) ---------- */
 function uploadToStorage(path, file, onDone){
