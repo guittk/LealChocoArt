@@ -194,14 +194,19 @@ function computeSalesGoals(){
   var meiMonthlyFee = Number(g.meiMonthlyFee) || 0;
   return state.products.map(function(p){
     var c = recipeCosts(p);
-    var scenarios = [true, false].map(function(withTax){
-      var targetProfit = monthlyGoal + (withTax ? meiMonthlyFee : 0);
+    function scenarioFor(targetProfit){
       var unitsMonth = c.profit > 0 ? Math.ceil(targetProfit / c.profit) : null;
       var unitsWeek = (unitsMonth != null) ? Math.ceil(unitsMonth / WEEKS_PER_MONTH) : null;
       var unitsDay = (unitsWeek != null && daysPerWeek > 0) ? Math.ceil(unitsWeek / daysPerWeek) : null;
-      return { withTax: withTax, targetProfit: targetProfit, unitsMonth: unitsMonth, unitsWeek: unitsWeek, unitsDay: unitsDay };
+      return { targetProfit: targetProfit, unitsMonth: unitsMonth, unitsWeek: unitsWeek, unitsDay: unitsDay };
+    }
+    var scenarios = [true, false].map(function(withTax){
+      var s = scenarioFor(monthlyGoal + (withTax ? meiMonthlyFee : 0));
+      s.withTax = withTax;
+      return s;
     });
-    return { product: p, costs: c, scenarios: scenarios };
+    var breakeven = scenarioFor(meiMonthlyFee);
+    return { product: p, costs: c, scenarios: scenarios, breakeven: breakeven };
   });
 }
 function isSoldOut(p){ return p.stock !== undefined && p.stock !== null && Number(p.stock) <= 0; }
@@ -1230,14 +1235,21 @@ function pageAdminFinanceGoalsBody(){
   '</div>';
 
   var cardsHtml = results.map(function(res){
-    var p = res.product, c = res.costs;
+    var p = res.product, c = res.costs, be = res.breakeven;
     var scenario = res.scenarios.filter(function(s){ return s.withTax === !!g.includeTax; })[0];
     var unreachable = c.profit <= 0;
     return '<div class="dash-panel" style="margin-bottom:16px">' +
       '<p class="dash-panel-title">'+icon('treat',15,'var(--primary-dark)')+' '+esc(p.name)+'</p>' +
       (unreachable
         ? '<p style="color:#c0392b;font-size:13px;font-weight:700">Esse produto está com lucro zero ou negativo ('+currency(c.profit)+'). Ajuste preço ou custos na aba Receitas & Custos.</p>'
-        : '<div class="stat-grid">' +
+        : '<p style="font-weight:700;font-size:12.5px;color:var(--ink-soft);margin:0 0 8px">Para se pagar (cobrir a taxa MEI'+(be.targetProfit>0?', '+currency(be.targetProfit)+'/mês':'')+')</p>' +
+          '<div class="stat-grid">' +
+            statTile('Por dia', be.unitsDay!=null?be.unitsDay+' un':'—', 'sun') +
+            statTile('Por semana', be.unitsWeek!=null?be.unitsWeek+' un':'—', 'calendar') +
+            statTile('Por mês', be.unitsMonth!=null?be.unitsMonth+' un':'—', 'chart') +
+          '</div>' +
+          '<p style="font-weight:700;font-size:12.5px;color:var(--ink-soft);margin:18px 0 8px">Para bater a meta de lucro</p>' +
+          '<div class="stat-grid">' +
             statTile('Por dia', scenario.unitsDay!=null?scenario.unitsDay+' un':'—', 'sun') +
             statTile('Por semana', scenario.unitsWeek!=null?scenario.unitsWeek+' un':'—', 'calendar') +
             statTile('Por mês', scenario.unitsMonth!=null?scenario.unitsMonth+' un':'—', 'chart') +
