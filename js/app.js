@@ -65,6 +65,42 @@ function icon(name, size, color){
   return '<svg class="icon" width="'+size+'" height="'+size+'" viewBox="0 0 24 24" style="color:'+color+'">'+(paths[name]||'')+'</svg>';
 }
 
+/* ---------- theme (light/dark) ----------
+   Applied to <html>, which lives outside #app, so the DOM morph never
+   touches it. Persisted per browser; falls back to the OS preference. */
+var THEME_KEY = 'lca-theme';
+function storedTheme(){
+  try { return localStorage.getItem(THEME_KEY); } catch(e){ return null; }
+}
+function systemTheme(){
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+}
+function applyTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  try { localStorage.setItem(THEME_KEY, theme); } catch(e){}
+}
+function initTheme(){
+  state.theme = storedTheme() || systemTheme();
+  document.documentElement.setAttribute('data-theme', state.theme);
+  if (!storedTheme() && window.matchMedia){
+    // follow the OS while the visitor hasn't picked a side themselves
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    var onChange = function(e){
+      if (storedTheme()) return;
+      state.theme = e.matches ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', state.theme);
+      render();
+    };
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else if (mq.addListener) mq.addListener(onChange);
+  }
+}
+function ThemeToggle(){
+  var isDark = state.theme === 'dark';
+  return '<button class="icon-btn theme-toggle" data-action="toggleTheme" title="'+(isDark?'Mudar para tema claro':'Mudar para tema escuro')+'" aria-label="Alternar tema">' +
+    icon(isDark ? 'sun' : 'moon', 17) + '</button>';
+}
+
 /* ---------- fallback assets (used until Storage URLs resolve, or if Storage is unavailable) ---------- */
 var FALLBACK = {
   logoCircle: "assets/images/logo-circle.png",
@@ -100,6 +136,7 @@ var DEFAULT_SCHEDULE_TEMPLATE = [
 /* ---------- app state ---------- */
 var state = {
   page: 'site',
+  theme: 'light',
   menuOpen: false,
   modalOpen: false,
   confirmOpen: false,
@@ -400,8 +437,8 @@ function StatusCard(){
   var agenda = generateAgenda(AGENDA_DAYS);
   var first = agenda[0];
   var isNow = first && first.date === todayStr() && timeToMinutes(first.startTime) <= nowMinutes() && nowMinutes() <= timeToMinutes(first.endTime);
-  var color = isNow ? '#4ec98c' : '#e0537a';
-  var bg = isNow ? 'rgba(78,201,140,0.18)' : 'rgba(224,83,122,0.18)';
+  var color = isNow ? 'var(--ok)' : 'var(--danger)';
+  var bg = isNow ? 'var(--ok-bg)' : 'var(--danger-bg)';
   var label = isNow ? 'Vendendo agora' : (first ? 'Próxima venda' : 'Nenhuma venda agendada');
   var place = first ? first.locationName : 'Volte em breve';
   var whenHtml = '';
@@ -411,7 +448,7 @@ function StatusCard(){
       : (first.date === todayStr() ? 'Hoje' : dateLabel(first.dateObj)) + ' · ' + esc(place) + ' · ' + first.startTime + '–' + first.endTime;
   }
   return '<div class="status-card">' +
-    '<div class="status-dot" style="background:'+color+';box-shadow:0 0 0 6px '+bg+'"></div>' +
+    '<div class="status-dot" style="background:'+color+';color:'+color+';box-shadow:0 0 0 6px '+bg+'"></div>' +
     '<div><p style="font-weight:700;font-size:15.5px;margin:0">'+label+'</p>' +
     '<p style="font-size:13.5px;color:var(--ink-soft);margin:3px 0 0">'+whenHtml+'</p></div>' +
     '</div>';
@@ -464,7 +501,7 @@ function sectionHero(){
     '<div class="blob" style="width:320px;height:320px;background:var(--pink-soft);top:-70px;right:-50px"></div>' +
     '<div class="blob" style="width:240px;height:240px;background:var(--lilac-soft);bottom:-50px;left:-30px"></div>' +
     '<div class="hero-grid">' +
-      '<div>' +
+      '<div class="hero-copy">' +
         '<p class="script-tag">feito à mão, com carinho</p>' +
         '<h1>Chocolate feito à mão,<br> <span class="script-accent">com arte e carinho.</span></h1>' +
         '<p class="lead">Bombons e pães de mel artesanais produzidos em pequenos lotes pela Julia. Monte seu carrinho abaixo e peça sua encomenda.</p>' +
@@ -668,12 +705,12 @@ function renderDeleteLocationModal(){
   var loc = getLocation(state.confirmDeleteLocationId);
   var name = loc ? loc.name : 'esta localização';
   return '<div class="modal-overlay" data-action="closeDeleteLocationBg"><div class="modal" style="text-align:center" data-stop="1">' +
-    '<div style="width:60px;height:60px;border-radius:50%;background:var(--pink-soft);display:flex;align-items:center;justify-content:center;margin:0 auto 18px">' + icon('trash',26,'#c94a6d') + '</div>' +
+    '<div style="width:60px;height:60px;border-radius:50%;background:var(--pink-soft);display:flex;align-items:center;justify-content:center;margin:0 auto 18px">' + icon('trash',26,'var(--danger)') + '</div>' +
     '<h2 style="font-size:22px;margin:0 0 10px">Excluir localização?</h2>' +
     '<p style="font-size:14px;color:var(--ink-soft);line-height:1.7">Tem certeza que deseja excluir <strong>'+esc(name)+'</strong>? Essa ação não pode ser desfeita.</p>' +
     '<div style="display:flex;gap:10px;margin-top:20px">' +
       '<button class="btn-secondary" data-action="cancelDeleteLocation" style="flex:1;justify-content:center">Cancelar</button>' +
-      '<button class="btn-primary" data-action="confirmDeleteLocation" style="flex:1;justify-content:center;background:#e0537a;border-color:#7a1f38">Excluir</button>' +
+      '<button class="btn-primary" data-action="confirmDeleteLocation" style="flex:1;justify-content:center;background:var(--danger)">Excluir</button>' +
     '</div></div></div>';
 }
 
@@ -682,7 +719,7 @@ function renderHeader(){
   if (state.page === 'admin'){
     return '<header><div class="header-inner">' +
       '<a href="#" data-action="go" data-page="site">'+LogoImg()+'</a>' +
-      '<div style="display:flex;gap:10px;align-items:center">' +
+      '<div style="display:flex;gap:10px;align-items:center">' + ThemeToggle() +
       '<button class="btn-secondary sm" data-action="go" data-page="site">Voltar ao site</button></div>' +
       '</div></header>';
   }
@@ -691,8 +728,8 @@ function renderHeader(){
   var mobileHtml = links.map(function(l){ return '<a class="nav-link" href="'+l[1]+'" data-action="closeMenu">'+l[0]+'</a>'; }).join('');
   return '<header>' +
     '<div class="header-inner"><a href="#topo">'+LogoImg()+'</a>' +
-      '<nav class="desktop-nav">' + navHtml + CartButton() + '</nav>' +
-      '<div class="mobile-row">' + CartButton() +
+      '<nav class="desktop-nav">' + navHtml + ThemeToggle() + CartButton() + '</nav>' +
+      '<div class="mobile-row">' + ThemeToggle() + CartButton() +
         '<button class="mobile-toggle" data-action="toggleMenu">' + icon(state.menuOpen ? 'close' : 'menu', 22) + '</button>' +
       '</div>' +
     '</div>' +
@@ -879,7 +916,7 @@ function ReminderBanner(){
       '<button data-action="dismissReminder" data-id="'+o.id+'" style="background:none;border:none;color:inherit;opacity:.8">'+icon('x',14)+'</button>' +
       '</div>';
   }).join('');
-  return '<div style="background:#e0537a;color:#fff;border-radius:18px;padding:14px 18px;margin-bottom:20px">' +
+  return '<div style="background:var(--danger);color:#fff;border-radius:var(--r-lg);padding:14px 18px;margin-bottom:20px;box-shadow:var(--shadow-md)">' +
     '<p style="margin:0;font-weight:800;font-size:14px;display:flex;align-items:center;gap:8px">'+icon('bell',16)+' Retirada chegando — prepare o pedido</p>' +
     items +
     '</div>' + notifBtn;
@@ -1223,7 +1260,7 @@ function recipeProductCard(p){
   var ingRows = recipeUsageTable(p, r.ingredientUsage, 'ingredient');
   var packRows = recipeUsageTable(p, r.packagingUsage, 'packaging');
 
-  var profitColor = c.profit >= 0 ? 'var(--primary-dark)' : '#c0392b';
+  var profitColor = c.profit >= 0 ? 'var(--primary-dark)' : 'var(--danger)';
   return '<div class="admin-loc-card">' +
     '<p style="font-weight:800;font-size:15px;margin:0 0 14px">'+esc(p.name)+'</p>' +
     '<div class="fin-grid-3" style="margin-bottom:14px">' +
@@ -1273,7 +1310,7 @@ function pageAdminFinanceGoalsBody(){
     return '<div class="dash-panel" style="margin-bottom:16px">' +
       '<p class="dash-panel-title">'+icon('treat',15,'var(--primary-dark)')+' '+esc(p.name)+'</p>' +
       (unreachable
-        ? '<p style="color:#c0392b;font-size:13px;font-weight:700">Esse produto está com lucro zero ou negativo ('+currency(c.profit)+'). Ajuste preço ou custos na aba Receitas & Custos.</p>'
+        ? '<p style="color:var(--danger);font-size:13px;font-weight:700">Esse produto está com lucro zero ou negativo ('+currency(c.profit)+'). Ajuste preço ou custos na aba Receitas & Custos.</p>'
         : '<p style="font-weight:700;font-size:12.5px;color:var(--ink-soft);margin:0 0 8px">Para se pagar (cobrir ingredientes/embalagem + taxa MEI)</p>' +
           '<div class="stat-grid">' +
             statTile('Por dia', be.unitsDay!=null?be.unitsDay+' un':'—', 'sun') +
@@ -1317,7 +1354,7 @@ function itemHistoryRowsHtml(item){
       ? '<span class="hint" style="margin:0">primeiro preço registrado</span>'
       : (Math.abs(r.diff) < 0.0001
           ? '<span class="hint" style="margin:0">sem alteração</span>'
-          : '<span style="font-weight:700;font-size:12.5px;color:'+(r.diff>0?'#c0392b':'var(--primary-dark)')+'">'+(r.diff>0?'▲ ':'▼ ')+currency(Math.abs(r.diff))+'</span>');
+          : '<span style="font-weight:700;font-size:12.5px;color:'+(r.diff>0?'var(--danger)':'var(--ok)')+'">'+(r.diff>0?'▲ ':'▼ ')+currency(Math.abs(r.diff))+'</span>');
     return '<div class="admin-row" style="justify-content:space-between"><span style="font-size:13px">'+dateLabel(new Date(r.date+'T00:00:00'))+'</span><strong>'+currency(r.price)+'</strong>'+diffHtml+'</div>';
   }).join('');
 }
@@ -1345,7 +1382,7 @@ function priceHistoryMultiChart(items){
     var dots = pts.map(function(pt){
       return '<circle cx="'+pt.x.toFixed(1)+'" cy="'+pt.y.toFixed(1)+'" r="3.5" fill="'+s.color+'"><title>'+esc(s.name)+' · '+esc(pt.date)+': '+currency(pt.price)+'</title></circle>';
     }).join('');
-    return '<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="2.5"/>' + dots;
+    return '<path class="chart-line" d="'+d+'" pathLength="1" fill="none" stroke="'+s.color+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>' + dots;
   }).join('');
   return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:190px">' +
     paths +
@@ -1503,6 +1540,11 @@ document.addEventListener('click', function(e){
   else if (action === 'openModal') openModal();
   else if (action === 'closeModal') closeModal();
   else if (action === 'closeConfirm') { state.confirmOpen = false; render(); }
+  else if (action === 'toggleTheme') {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    applyTheme(state.theme);
+    render();
+  }
   else if (action === 'toggleMenu') { state.menuOpen = !state.menuOpen; render(); }
   else if (action === 'closeMenu') { state.menuOpen = false; render(); }
   else if (action === 'adminTab') { state.adminTab = el.dataset.tab; render(); }
@@ -1914,6 +1956,16 @@ document.addEventListener('submit', function(e){
   render();
 });
 
+/* ---------- header elevation on scroll ----------
+   The class goes on <body> (outside #app) so the DOM morph can't strip it. */
+function syncScrollState(){
+  var scrolled = (window.pageYOffset || document.documentElement.scrollTop) > 8;
+  document.body.classList.toggle('is-scrolled', scrolled);
+}
+window.addEventListener('scroll', syncScrollState, { passive: true });
+
+initTheme();
+syncScrollState();
 upgradeBrandAssets();
 initFirebaseSync();
 seedFirebaseIfEmpty();
