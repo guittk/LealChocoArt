@@ -127,7 +127,7 @@ var state = {
   packagingItems: [],
   financialGoals: { monthlyGoal: 0, daysPerWeek: 6, includeTax: true, meiMonthlyFee: 76.90 },
   priceChangeModal: null,
-  historySelected: null,
+  historySelectedKeys: null,
   adminReminders: [],
   notifPermission: (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported'
 };
@@ -1121,11 +1121,11 @@ function ingredientRow(item){
   var d = itemUnitCostDisplay(item);
   return '<div class="admin-row">' +
     labeledField('Nome', '<input class="input" style="height:36px" value="'+esc(item.name)+'" data-action="setIngredientName" data-ingid="'+item.id+'">', 'flex:1 1 140px') +
+    labeledField('Preço do pote (R$)', '<input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setIngredientPrice" data-ingid="'+item.id+'">') +
+    labeledField('Qtd. do pote', '<input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setIngredientQty" data-ingid="'+item.id+'">') +
     labeledField('Unidade', '<select class="input" style="width:80px;height:36px" data-action="setIngredientUnit" data-ingid="'+item.id+'">' +
       ['g','ml','un'].map(function(u){ return '<option value="'+u+'"'+(item.unit===u?' selected':'')+'>'+u+'</option>'; }).join('') +
     '</select>') +
-    labeledField('Preço do pote (R$)', '<input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setIngredientPrice" data-ingid="'+item.id+'">') +
-    labeledField('Qtd. do pote', '<input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setIngredientQty" data-ingid="'+item.id+'">') +
     labeledField('Custo/'+d.label, '<div style="font-size:14px;font-weight:700;padding-top:6px">'+currency(d.value)+'</div>', 'min-width:100px') +
     '<button data-action="removeIngredient" data-ingid="'+item.id+'" style="background:none;border:none;color:var(--ink-soft);margin-left:auto;align-self:center" aria-label="Remover ingrediente">'+icon('trash',16)+'</button>' +
     '</div>';
@@ -1134,11 +1134,11 @@ function packagingRow(item){
   var d = itemUnitCostDisplay(item);
   return '<div class="admin-row">' +
     labeledField('Nome', '<input class="input" style="height:36px" value="'+esc(item.name)+'" data-action="setPackagingName" data-packid="'+item.id+'">', 'flex:1 1 140px') +
+    labeledField('Preço do pacote (R$)', '<input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setPackagingPrice" data-packid="'+item.id+'">') +
+    labeledField('Qtd. no pacote', '<input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setPackagingQty" data-packid="'+item.id+'">') +
     labeledField('Unidade', '<select class="input" style="width:80px;height:36px" data-action="setPackagingUnit" data-packid="'+item.id+'">' +
       ['un','g','ml'].map(function(u){ return '<option value="'+u+'"'+(item.unit===u?' selected':'')+'>'+u+'</option>'; }).join('') +
     '</select>') +
-    labeledField('Preço do pacote (R$)', '<input class="input" type="number" step="0.01" value="'+(item.packagePrice||0)+'" style="width:100px;height:34px" data-action="setPackagingPrice" data-packid="'+item.id+'">') +
-    labeledField('Qtd. no pacote', '<input class="input" type="number" step="0.01" value="'+(item.packageQty||0)+'" style="width:90px;height:34px" data-action="setPackagingQty" data-packid="'+item.id+'">') +
     labeledField('Custo/'+d.label, '<div style="font-size:14px;font-weight:700;padding-top:6px">'+currency(d.value)+'</div>', 'min-width:100px') +
     '<button data-action="removePackaging" data-packid="'+item.id+'" style="background:none;border:none;color:var(--ink-soft);margin-left:auto;align-self:center" aria-label="Remover embalagem">'+icon('trash',16)+'</button>' +
     '</div>';
@@ -1150,9 +1150,9 @@ function pageAdminFinanceIngredientsBody(){
         '<p style="font-weight:800;font-size:14.5px;margin:0 0 12px">Novo ingrediente</p>' +
         '<div class="field"><label>Nome</label><input class="input" id="ni-nome" placeholder="Ex: Chocolate belga 54%"></div>' +
         '<div class="fin-grid-3">' +
-          '<div class="field"><label>Unidade</label><select class="input" id="ni-unidade"><option value="g">g</option><option value="ml">ml</option><option value="un">un</option></select></div>' +
           '<div class="field"><label>Preço do pote (R$)</label><input class="input" id="ni-preco" type="number" step="0.01" value="0"></div>' +
           '<div class="field"><label>Qtd. do pote</label><input class="input" id="ni-qtd" type="number" step="0.01" value="1"></div>' +
+          '<div class="field"><label>Unidade</label><select class="input" id="ni-unidade"><option value="g">g</option><option value="ml">ml</option><option value="un">un</option></select></div>' +
         '</div>' +
         '<div style="display:flex;gap:10px">' +
           '<button class="btn-primary sm" data-action="createIngredient">Salvar</button>' +
@@ -1171,9 +1171,9 @@ function pageAdminFinancePackagingBody(){
         '<p style="font-weight:800;font-size:14.5px;margin:0 0 12px">Nova embalagem</p>' +
         '<div class="field"><label>Nome</label><input class="input" id="np2-nome" placeholder="Ex: Saquinho celofane"></div>' +
         '<div class="fin-grid-3">' +
-          '<div class="field"><label>Unidade</label><select class="input" id="np2-unidade"><option value="un">un</option><option value="g">g</option><option value="ml">ml</option></select></div>' +
           '<div class="field"><label>Preço do pacote (R$)</label><input class="input" id="np2-preco" type="number" step="0.01" value="0"></div>' +
           '<div class="field"><label>Qtd. no pacote</label><input class="input" id="np2-qtd" type="number" step="0.01" value="1"></div>' +
+          '<div class="field"><label>Unidade</label><select class="input" id="np2-unidade"><option value="un">un</option><option value="g">g</option><option value="ml">ml</option></select></div>' +
         '</div>' +
         '<div style="display:flex;gap:10px">' +
           '<button class="btn-primary sm" data-action="createPackaging">Salvar</button>' +
@@ -1274,12 +1274,15 @@ function pageAdminFinanceGoalsBody(){
       '<p class="dash-panel-title">'+icon('treat',15,'var(--primary-dark)')+' '+esc(p.name)+'</p>' +
       (unreachable
         ? '<p style="color:#c0392b;font-size:13px;font-weight:700">Esse produto está com lucro zero ou negativo ('+currency(c.profit)+'). Ajuste preço ou custos na aba Receitas & Custos.</p>'
-        : '<p style="font-weight:700;font-size:12.5px;color:var(--ink-soft);margin:0 0 8px">Para se pagar (cobrir a taxa MEI'+(be.targetProfit>0?', '+currency(be.targetProfit)+'/mês':'')+')</p>' +
+        : '<p style="font-weight:700;font-size:12.5px;color:var(--ink-soft);margin:0 0 8px">Para se pagar (cobrir ingredientes/embalagem + taxa MEI)</p>' +
           '<div class="stat-grid">' +
             statTile('Por dia', be.unitsDay!=null?be.unitsDay+' un':'—', 'sun') +
             statTile('Por semana', be.unitsWeek!=null?be.unitsWeek+' un':'—', 'calendar') +
             statTile('Por mês', be.unitsMonth!=null?be.unitsMonth+' un':'—', 'chart') +
           '</div>' +
+          (be.unitsMonth != null
+            ? '<p class="hint" style="margin-top:8px">Nessas '+be.unitsMonth+' un/mês: receita de <strong>'+currency(be.unitsMonth*c.sellPrice)+'</strong> cobre <strong>'+currency(be.unitsMonth*c.finalCostPerPackage)+'</strong> de ingredientes/embalagem + <strong>'+currency(be.targetProfit)+'</strong> da taxa MEI.</p>'
+            : '') +
           '<p style="font-weight:700;font-size:12.5px;color:var(--ink-soft);margin:18px 0 8px">Para bater a meta de lucro</p>' +
           '<div class="stat-grid">' +
             statTile('Por dia', scenario.unitsDay!=null?scenario.unitsDay+' un':'—', 'sun') +
@@ -1293,74 +1296,99 @@ function pageAdminFinanceGoalsBody(){
 
   return formHtml + '<div style="height:8px"></div>' + cardsHtml;
 }
-function priceHistoryChart(history){
-  if (!history || history.length < 2){
-    return '<p style="color:var(--ink-soft);font-size:13px">Ainda não há histórico suficiente para o gráfico (precisa de pelo menos 2 preços registrados).</p>';
-  }
-  var W = 560, H = 170, padX = 36, padY = 20;
-  var prices = history.map(function(x){ return Number(x.price); });
-  var minP = Math.min.apply(null, prices), maxP = Math.max.apply(null, prices);
-  if (minP === maxP) { minP -= 1; maxP += 1; }
-  var n = history.length;
-  var pts = history.map(function(x, i){
-    var px = padX + (i / (n - 1)) * (W - padX * 2);
-    var py = H - padY - ((Number(x.price) - minP) / (maxP - minP)) * (H - padY * 2);
-    return { x: px, y: py, price: Number(x.price), date: x.date };
-  });
-  var pathD = pts.map(function(pt, i){ return (i === 0 ? 'M' : 'L') + pt.x.toFixed(1) + ',' + pt.y.toFixed(1); }).join(' ');
-  var dots = pts.map(function(pt){
-    return '<circle cx="'+pt.x.toFixed(1)+'" cy="'+pt.y.toFixed(1)+'" r="4" fill="var(--primary)" stroke="var(--primary-ink)" stroke-width="1.5"><title>'+esc(pt.date)+': '+currency(pt.price)+'</title></circle>';
-  }).join('');
-  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:170px">' +
-    '<path d="'+pathD+'" fill="none" stroke="var(--primary)" stroke-width="2.5"/>' +
-    dots +
-    '<text x="4" y="12" font-size="10" fill="var(--ink-soft)">'+currency(maxP)+'</text>' +
-    '<text x="4" y="'+(H - padY + 4)+'" font-size="10" fill="var(--ink-soft)">'+currency(minP)+'</text>' +
-    '<text x="'+pts[0].x.toFixed(1)+'" y="'+(H - 4)+'" font-size="10" fill="var(--ink-soft)" text-anchor="start">'+esc(pts[0].date)+'</text>' +
-    '<text x="'+pts[n-1].x.toFixed(1)+'" y="'+(H - 4)+'" font-size="10" fill="var(--ink-soft)" text-anchor="end">'+esc(pts[n-1].date)+'</text>' +
-  '</svg>';
-}
+var CHART_COLORS = ['#A66BF0','#FF8FC0','#6F9066','#4F8FDB','#E0937A','#D4A017','#8A4FDB','#3BAFA0'];
 function priceHistoryItems(){
   var arr = [];
   state.ingredients.forEach(function(i){ arr.push({ kind:'ingredient', id:i.id, name:i.name, item:i }); });
   state.packagingItems.forEach(function(i){ arr.push({ kind:'packaging', id:i.id, name:i.name, item:i }); });
   return arr;
 }
-function pageAdminFinanceHistoryBody(){
-  var items = priceHistoryItems();
-  if (items.length === 0) return '<p style="color:var(--ink-soft);font-size:13.5px">Cadastre ingredientes ou embalagens primeiro.</p>';
-  var selectedKey = state.historySelected || (items[0].kind + ':' + items[0].id);
-  var selected = items.filter(function(x){ return (x.kind + ':' + x.id) === selectedKey; })[0] || items[0];
-  var options = items.map(function(x){
-    var key = x.kind + ':' + x.id;
-    return '<option value="'+key+'"'+(key===selectedKey?' selected':'')+'>'+esc(x.name)+' ('+(x.kind==='ingredient'?'ingrediente':'embalagem')+')</option>';
-  }).join('');
-  var history = (selected.item.priceHistory || []).slice().sort(function(a,b){ return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
-
+function itemHistoryRowsHtml(item){
+  var history = (item.priceHistory || []).slice().sort(function(a,b){ return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
   var rows = []; var prev = null;
   history.forEach(function(h){
     rows.push({ date: h.date, price: Number(h.price), diff: prev == null ? null : (Number(h.price) - prev) });
     prev = Number(h.price);
   });
   rows.reverse();
-  var rowsHtml = rows.length === 0
-    ? '<p style="color:var(--ink-soft);font-size:13px">Sem histórico ainda.</p>'
-    : rows.map(function(r){
-        var diffHtml = r.diff == null
-          ? '<span class="hint" style="margin:0">primeiro preço registrado</span>'
-          : (Math.abs(r.diff) < 0.0001
-              ? '<span class="hint" style="margin:0">sem alteração</span>'
-              : '<span style="font-weight:700;font-size:12.5px;color:'+(r.diff>0?'#c0392b':'var(--primary-dark)')+'">'+(r.diff>0?'▲ ':'▼ ')+currency(Math.abs(r.diff))+'</span>');
-        return '<div class="admin-row" style="justify-content:space-between"><span style="font-size:13px">'+dateLabel(new Date(r.date+'T00:00:00'))+'</span><strong>'+currency(r.price)+'</strong>'+diffHtml+'</div>';
+  if (rows.length === 0) return '<p style="color:var(--ink-soft);font-size:13px">Sem histórico ainda.</p>';
+  return rows.map(function(r){
+    var diffHtml = r.diff == null
+      ? '<span class="hint" style="margin:0">primeiro preço registrado</span>'
+      : (Math.abs(r.diff) < 0.0001
+          ? '<span class="hint" style="margin:0">sem alteração</span>'
+          : '<span style="font-weight:700;font-size:12.5px;color:'+(r.diff>0?'#c0392b':'var(--primary-dark)')+'">'+(r.diff>0?'▲ ':'▼ ')+currency(Math.abs(r.diff))+'</span>');
+    return '<div class="admin-row" style="justify-content:space-between"><span style="font-size:13px">'+dateLabel(new Date(r.date+'T00:00:00'))+'</span><strong>'+currency(r.price)+'</strong>'+diffHtml+'</div>';
+  }).join('');
+}
+function priceHistoryMultiChart(items){
+  var series = items.map(function(x, idx){
+    var h = (x.item.priceHistory || []).slice().sort(function(a,b){ return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+    return { name: x.name, color: CHART_COLORS[idx % CHART_COLORS.length], history: h };
+  }).filter(function(s){ return s.history.length > 0; });
+  var totalPoints = series.reduce(function(s, x){ return s + x.history.length; }, 0);
+  if (series.length === 0 || totalPoints < 2){
+    return '<p style="color:var(--ink-soft);font-size:13px">Ainda não há histórico suficiente para o gráfico (precisa de pelo menos 2 preços registrados).</p>';
+  }
+  var allDates = [], allPrices = [];
+  series.forEach(function(s){ s.history.forEach(function(h){ allDates.push(h.date); allPrices.push(Number(h.price)); }); });
+  var uniqueDates = allDates.filter(function(d, i){ return allDates.indexOf(d) === i; }).sort();
+  var minP = Math.min.apply(null, allPrices), maxP = Math.max.apply(null, allPrices);
+  if (minP === maxP) { minP -= 1; maxP += 1; }
+  var W = 560, H = 190, padX = 40, padY = 20;
+  var n = uniqueDates.length;
+  function xFor(date){ var i = uniqueDates.indexOf(date); return padX + (n === 1 ? 0 : (i / (n - 1)) * (W - padX * 2)); }
+  function yFor(price){ return H - padY - ((price - minP) / (maxP - minP)) * (H - padY * 2); }
+  var paths = series.map(function(s){
+    var pts = s.history.map(function(h){ return { x: xFor(h.date), y: yFor(Number(h.price)), price: Number(h.price), date: h.date }; });
+    var d = pts.map(function(pt, i){ return (i === 0 ? 'M' : 'L') + pt.x.toFixed(1) + ',' + pt.y.toFixed(1); }).join(' ');
+    var dots = pts.map(function(pt){
+      return '<circle cx="'+pt.x.toFixed(1)+'" cy="'+pt.y.toFixed(1)+'" r="3.5" fill="'+s.color+'"><title>'+esc(s.name)+' · '+esc(pt.date)+': '+currency(pt.price)+'</title></circle>';
+    }).join('');
+    return '<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="2.5"/>' + dots;
+  }).join('');
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:190px">' +
+    paths +
+    '<text x="4" y="12" font-size="10" fill="var(--ink-soft)">'+currency(maxP)+'</text>' +
+    '<text x="4" y="'+(H - padY + 4)+'" font-size="10" fill="var(--ink-soft)">'+currency(minP)+'</text>' +
+    '<text x="'+padX+'" y="'+(H - 4)+'" font-size="10" fill="var(--ink-soft)" text-anchor="start">'+esc(uniqueDates[0])+'</text>' +
+    '<text x="'+(W - padX)+'" y="'+(H - 4)+'" font-size="10" fill="var(--ink-soft)" text-anchor="end">'+esc(uniqueDates[n-1])+'</text>' +
+  '</svg>';
+}
+function pageAdminFinanceHistoryBody(){
+  var items = priceHistoryItems();
+  if (items.length === 0) return '<p style="color:var(--ink-soft);font-size:13.5px">Cadastre ingredientes ou embalagens primeiro.</p>';
+  var allKeys = items.map(function(x){ return x.kind + ':' + x.id; });
+  var selectedKeys = state.historySelectedKeys || allKeys;
+  var selectedItems = items.filter(function(x){ return selectedKeys.indexOf(x.kind + ':' + x.id) !== -1; });
+
+  var checkboxesHtml = items.map(function(x, idx){
+    var key = x.kind + ':' + x.id;
+    var color = CHART_COLORS[idx % CHART_COLORS.length];
+    var checked = selectedKeys.indexOf(key) !== -1;
+    return '<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:var(--ink);background:var(--card);border:2px solid var(--line);border-radius:999px;padding:6px 12px 6px 8px">' +
+      '<input type="checkbox" data-action="toggleHistoryItem" data-key="'+key+'" '+(checked?'checked':'')+'>' +
+      '<span style="width:10px;height:10px;border-radius:50%;background:'+color+';display:inline-block"></span>' +
+      esc(x.name) +
+    '</label>';
+  }).join('');
+
+  var listsHtml = selectedItems.length === 0
+    ? '<p style="color:var(--ink-soft);font-size:13px">Nenhum item selecionado.</p>'
+    : selectedItems.map(function(x){
+        return '<div style="margin-bottom:18px"><p style="font-weight:800;font-size:13.5px;margin:0 0 8px">'+esc(x.name)+'</p>' + itemHistoryRowsHtml(x.item) + '</div>';
       }).join('');
 
-  return '<div class="field"><label>Selecionar item</label><select class="input" data-action="selectHistoryItem">'+options+'</select></div>' +
+  return '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px">' +
+      checkboxesHtml +
+      '<button class="btn-ghost sm" data-action="selectAllHistory">Selecionar todos</button>' +
+    '</div>' +
     '<div class="dash-panel" style="margin-bottom:16px">' +
-      '<p class="dash-panel-title">'+icon('chart',15,'var(--primary-dark)')+' Evolução do preço — '+esc(selected.name)+'</p>' +
-      priceHistoryChart(history) +
+      '<p class="dash-panel-title">'+icon('chart',15,'var(--primary-dark)')+' Evolução do preço</p>' +
+      priceHistoryMultiChart(selectedItems) +
     '</div>' +
     '<p style="font-weight:800;font-size:14.5px;margin:0 0 12px">Histórico de alterações</p>' +
-    rowsHtml;
+    listsHtml;
 }
 function pageAdminFinanceBody(){
   var ftab = state.financeTab;
@@ -1748,6 +1776,7 @@ document.addEventListener('click', function(e){
     }
     render();
   }
+  else if (action === 'selectAllHistory') { state.historySelectedKeys = null; render(); }
 });
 
 document.addEventListener('change', function(e){
@@ -1810,7 +1839,17 @@ document.addEventListener('change', function(e){
     }
     render();
   }
-  else if (action === 'selectHistoryItem') { state.historySelected = el.value; render(); }
+  else if (action === 'toggleHistoryItem') {
+    var hKey = el.dataset.key;
+    var hItems = priceHistoryItems();
+    var hAllKeys = hItems.map(function(x){ return x.kind + ':' + x.id; });
+    var hCurrent = state.historySelectedKeys ? state.historySelectedKeys.slice() : hAllKeys.slice();
+    var hIdx = hCurrent.indexOf(hKey);
+    if (el.checked && hIdx === -1) hCurrent.push(hKey);
+    else if (!el.checked && hIdx !== -1) hCurrent.splice(hIdx, 1);
+    state.historySelectedKeys = hCurrent;
+    render();
+  }
   else if (action === 'setPackagingQty') { var spq = getPackagingItem(el.dataset.packid); if (spq) { spq.packageQty = Number(el.value) || 0; dbSet('packagingItems/'+spq.id+'/packageQty', spq.packageQty); } render(); }
   else if (action === 'setRecipeYield') { var ryp = getProduct(el.dataset.id); if (ryp) { var ry = ensureRecipe(ryp); ry.yieldQty = Number(el.value) || 1; dbSet('products/'+ryp.id+'/recipe', ry); } render(); }
   else if (action === 'setRecipeUnitsPerPackage') { var rup = getProduct(el.dataset.id); if (rup) { var ru = ensureRecipe(rup); ru.unitsPerPackage = Number(el.value) || 1; dbSet('products/'+rup.id+'/recipe', ru); } render(); }
