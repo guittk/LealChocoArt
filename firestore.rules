@@ -116,6 +116,15 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Instagram profile research (prospecção): a Cloud Function callable roda o
+    // crawl inteiro e escreve o resultado via Admin SDK (ignora estas regras) —
+    // o client nunca grava direto, só lê pra acompanhar o progresso ao vivo e
+    // reabrir análises antigas sem gastar crédito da Apify de novo.
+    match /apice_igResearch/{docId} {
+      allow read: if isActiveUser();
+      allow write: if false;
+    }
+
     // Shared dropdown defaults: everyone on the team reads them so forms can
     // render; only socios change them.
     match /apice_settings/{docId} {
