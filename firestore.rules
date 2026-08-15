@@ -104,7 +104,7 @@ service cloud.firestore {
     // Sensitive financial and client-credential data is restricted to socios.
     match /{collection}/{docId} {
       allow read, write: if isSocio() &&
-        collection in ['apice_credentials', 'apice_invoices', 'apice_costs', 'apice_contracts', 'apice_changeRequests'];
+        collection in ['apice_credentials', 'apice_invoices', 'apice_costs', 'apice_contracts'];
     }
 
     // Audit log is append-only. Anyone active can write an entry (every role
