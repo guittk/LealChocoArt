@@ -122,7 +122,12 @@ service cloud.firestore {
     // reabrir análises antigas sem gastar crédito da Apify de novo.
     match /apice_igResearch/{docId} {
       allow read: if isActiveUser();
-      allow write: if false;
+      // Só a Cloud Function (via Admin SDK, ignora estas regras) cria um
+      // relatório novo — o client não pode fabricar um "concluído" sem
+      // passar pelo crawl de verdade. Editar o texto do relatório já salvo
+      // (ou excluí-lo) é permitido direto pelo client.
+      allow create: if false;
+      allow update, delete: if isActiveUser();
     }
 
     // Shared dropdown defaults: everyone on the team reads them so forms can
