@@ -79,7 +79,7 @@ service cloud.firestore {
     match /{collection}/{docId} {
       allow read, write: if isActiveUser() &&
         collection in [
-          'apice_projects', 'apice_tasks', 'apice_timeEntries', 'apice_calendarEvents',
+          'apice_projects', 'apice_prospects', 'apice_tasks', 'apice_timeEntries', 'apice_calendarEvents',
           'apice_deliveries', 'apice_proposals', 'apice_pricing', 'apice_alignments',
           'apice_boardGroups', 'apice_boardItems', 'apice_ideas'
         ];
