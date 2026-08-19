@@ -116,6 +116,16 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Push notification tokens: one document per device, written by the person
+    // who owns it and read only by the Cloud Functions that send the "waiting
+    // for your vote" notifications (Admin SDK bypasses these rules). Reading is
+    // socio-only because the collection maps people to devices; writing is open
+    // to any active user, since everyone registers their own device.
+    match /apice_pushTokens/{tokenId} {
+      allow read: if isSocio();
+      allow write: if isActiveUser();
+    }
+
     // Instagram profile research (prospecção): a Cloud Function callable roda o
     // crawl inteiro e escreve o resultado via Admin SDK (ignora estas regras) —
     // o client nunca grava direto, só lê pra acompanhar o progresso ao vivo e
