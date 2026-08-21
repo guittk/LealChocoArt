@@ -62,6 +62,15 @@ service cloud.firestore {
       allow read, write: if isActiveUser();
     }
 
+    // Activity timeline (and anything else nested under a lead) follows the
+    // lead's own rule. Firestore rules do NOT cascade into subcollections, so
+    // without this the `atividades` subcollection would fall through to the
+    // deny-all at the bottom of the file and every write would come back as
+    // "não autorizado" — a symptom with nothing to do with login or role.
+    match /apice_leads/{leadId}/{sub=**} {
+      allow read, write: if isActiveUser();
+    }
+
     // The public contact form writes here anonymously; only the team reads
     // or removes messages (removal happens once a message is acted on).
     match /apice_contactMessages/{messageId} {
