@@ -2,18 +2,59 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Leal ChocoArt — Confeitaria Artesanal</title>
-<meta name="description" content="Bombons e pães de mel artesanais feitos à mão pela Julia. Monte seu carrinho e peça sua encomenda.">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Leal ChocoArt — Bolos e Doces Artesanais</title>
+<meta name="description" content="Bolos, pães de mel, bombons e doces artesanais feitos à mão pela Julia, em pequenos lotes. Monte sua encomenda pelo site e combine a retirada.">
+<link rel="canonical" href="https://lealchocoart.guilherme-oliveira.com/">
+
+<!-- preview do link (WhatsApp, Instagram, Facebook) -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Leal ChocoArt">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://lealchocoart.guilherme-oliveira.com/">
+<meta property="og:title" content="Leal ChocoArt — Bolos e Doces Artesanais">
+<meta property="og:description" content="Doces feitos à mão em pequenos lotes. Monte sua encomenda pelo site e combine a retirada.">
+<meta property="og:image" content="https://lealchocoart.guilherme-oliveira.com/assets/images/og-cover.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Leal ChocoArt — bolos e doces artesanais, feitos à mão">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Leal ChocoArt — Bolos e Doces Artesanais">
+<meta name="twitter:description" content="Doces feitos à mão em pequenos lotes. Monte sua encomenda pelo site e combine a retirada.">
+<meta name="twitter:image" content="https://lealchocoart.guilherme-oliveira.com/assets/images/og-cover.png">
+
 <link rel="icon" type="image/png" href="assets/images/favicon.png">
+<link rel="apple-touch-icon" href="assets/images/icon-192.png">
+<link rel="manifest" href="manifest.json">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Quicksand:wght@400;500;600;700&family=Caveat:wght@600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=2026081206">
-<meta name="theme-color" content="#FFFBFD" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#141019" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;500;600;700;800&family=Caveat:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css?v=2026082502">
+
+<meta name="theme-color" content="#FDFBFE" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)">
+
+<script type="application/ld+json" id="ld-business">
+{
+  "@context": "https://schema.org",
+  "@type": "Bakery",
+  "name": "Leal ChocoArt",
+  "description": "Bolos, pães de mel, bombons e doces artesanais feitos à mão em pequenos lotes.",
+  "url": "https://lealchocoart.guilherme-oliveira.com/",
+  "image": "https://lealchocoart.guilherme-oliveira.com/assets/images/og-cover.png",
+  "logo": "https://lealchocoart.guilherme-oliveira.com/assets/images/logo-principal.png",
+  "servesCuisine": "Doces e confeitaria artesanal",
+  "priceRange": "$",
+  "telephone": "+5515998054872",
+  "address": { "@type": "PostalAddress", "addressLocality": "Sorocaba", "addressRegion": "SP", "addressCountry": "BR" },
+  "sameAs": ["https://www.instagram.com/lealchocoart/"]
+}
+</script>
+
 <script>
-/* Applies the saved theme before first paint so a visitor who picked a theme
-   that differs from their OS setting never sees the other one flash. */
+/* Aplica o tema salvo antes da primeira pintura, para que quem escolheu
+   um tema diferente do sistema nunca veja o outro piscar. */
 (function(){
   try {
     var t = localStorage.getItem('lca-theme');
@@ -25,12 +66,14 @@
 </head>
 <body>
 <div id="app"></div>
+<div class="toast-wrap" id="toasts" aria-live="polite" aria-atomic="false"></div>
+<div class="sr-only" id="live-region" role="status" aria-live="polite"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 
-<script src="js/app.js?v=2026081206"></script>
+<script src="js/app.js?v=2026082502"></script>
 </body>
 </html>

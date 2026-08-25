@@ -1,0 +1,18 @@
+{
+  "name": "Leal ChocoArt — Bolos e Doces Artesanais",
+  "short_name": "Leal ChocoArt",
+  "description": "Doces feitos à mão em pequenos lotes. Monte sua encomenda e combine a retirada.",
+  "start_url": "/?src=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FDFBFE",
+  "theme_color": "#A96EF0",
+  "lang": "pt-BR",
+  "categories": ["food", "shopping"],
+  "icons": [
+    { "src": "assets/images/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/images/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/images/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
