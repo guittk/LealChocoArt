@@ -186,6 +186,19 @@ service cloud.firestore {
       allow write: if isSocio();
     }
 
+    // Acervo (`/acervo`): a biblioteca de arquivos da casa — logo, modelos,
+    // documentos, fotos, vídeos. Todo mundo do time lê E envia: a logo e os
+    // modelos são justamente o que um freelancer precisa pra entregar no
+    // padrão da casa, e quem envia costuma ser quem acabou de produzir o
+    // arquivo. Só sócio EXCLUI, porque excluir aqui apaga o binário no Storage
+    // junto e não existe desfazer (ver `AssetsService.excluir`) — a regra do
+    // Storage não consegue fazer essa distinção sem ler o perfil a cada
+    // operação de arquivo, então é aqui que ela mora.
+    match /apice_assets/{assetId} {
+      allow read, create, update: if isActiveUser();
+      allow delete: if isSocio();
+    }
+
     // Invites gate who may join. Socios manage them; a signed-in person may
     // read only the invite addressed to their own e-mail.
     match /apice_invites/{email} {
