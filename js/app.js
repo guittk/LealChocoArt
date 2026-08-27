@@ -2274,6 +2274,20 @@ function ReminderBanner(){
   return out;
 }
 
+/* Via o service worker quando ele já estiver pronto (sobrevive à aba
+   minimizada/segundo plano melhor), senão cai pra `new Notification`
+   direto — nenhum dos dois funciona com o navegador fechado de
+   verdade, isso exigiria push do servidor (ver sw.js). */
+function showAdminNotification(title, body){
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  if (navigator.serviceWorker && navigator.serviceWorker.controller){
+    navigator.serviceWorker.ready.then(function(reg){
+      reg.showNotification(title, { body:body, icon:'assets/images/icon-192.png', badge:'assets/images/icon-192.png' });
+    }).catch(function(){ try { new Notification(title, { body:body }); } catch(e){} });
+  } else {
+    try { new Notification(title, { body:body }); } catch(e){}
+  }
+}
 function checkPickupReminders(){
   var nowMs = Date.now();
   state.orders.forEach(function(o){
@@ -2284,10 +2298,8 @@ function checkPickupReminders(){
     if (diffMin <= 10 && diffMin > -30){
       remindedOrderIds[o.id] = true;
       state.adminReminders.unshift(o);
-      if (typeof Notification !== 'undefined' && Notification.permission === 'granted'){
-        var itemsStr = (o.items||[]).map(function(i){ return i.qty+'x '+i.name; }).join(', ');
-        try { new Notification('Retirada em breve — Leal ChocoArt', { body: o.nome+' · '+itemsStr+' · '+(o.local||'') }); } catch(e){}
-      }
+      var itemsStr = (o.items||[]).map(function(i){ return i.qty+'x '+i.name; }).join(', ');
+      showAdminNotification('Retirada em breve — Leal ChocoArt', o.nome+' · '+itemsStr+' · '+(o.local||''));
       render();
     }
   });
@@ -4962,6 +4974,9 @@ function minuteTick(){
   checkPickupReminders();
 }
 
+if ('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(function(e){ console.warn('Service worker não registrado:', e); });
+}
 initTheme();
 loadCart();
 applyRouteFromHash();
