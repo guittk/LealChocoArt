@@ -204,7 +204,6 @@ var state = {
   addingIngredient: false,
   addingPackaging: false,
   addingLoss: false,
-  metasRateView: 'todos',       /* 'todos' (ritmo configurado) | 'umDoce' (calculadora avulsa) */
   metasSingleProductId: null,
   metasSingleQty: 5,
   lossDraft: null,        /* rascunho da perda em edição: { productId, batches, date, note, includeLabor, includePackaging, lostIngredientIds } */
@@ -547,26 +546,37 @@ function makeLossDraft(productId){
   return { productId:productId||'', batches:1, date:todayStr(), note:'', includeLabor:true, includePackaging:false, lostIngredientIds:allRecipeIngredientIds(p) };
 }
 
-/* Quanto custa comprar, PELA PRIMEIRA VEZ, todos os ingredientes de UMA
-   fornada dessa receita — em potes inteiros, não na quantidade exata
-   usada (é assim que se compra numa loja de verdade). Diferente de
-   recipeCosts(), que rateia o pote pela quantidade usada; aqui é o
-   dinheiro que sai do bolso de fato na primeira compra. */
+/* Quanto custa comprar, PELA PRIMEIRA VEZ, todos os ingredientes E
+   embalagens de UMA fornada dessa receita — em potes/pacotes inteiros,
+   não na quantidade exata usada (é assim que se compra numa loja de
+   verdade). Diferente de recipeCosts(), que rateia o pote pela
+   quantidade usada; aqui é o dinheiro que sai do bolso de fato na
+   primeira compra. Embalagem é POR UNIDADE VENDIDA (não por fornada
+   inteira como ingrediente), então a necessidade dela escala com
+   quantas embalagens essa fornada rende. */
 function firstPurchaseIngredients(p){
   var r = ensureRecipe(p);
-  var rows = r.ingredientUsage.map(function(u){
-    var ing = getIngredient(u.ingredientId); if (!ing) return null;
-    var needed = Number(u.qty) || 0;
-    var packQty = Number(ing.packageQty) || 0;
-    var packPrice = Number(ing.packagePrice) || 0;
-    var packs = packQty > 0 ? Math.ceil(needed / packQty - 1e-9) : 0;
-    return { item:ing, needed:needed, unit:ing.unit || 'un', packQty:packQty, packPrice:packPrice, packs:packs, fullCost:packs * packPrice };
-  }).filter(Boolean);
-  var totalFull = rows.reduce(function(s,x){ return s + x.fullCost; }, 0);
   var yieldQty = Number(r.yieldQty) || 1;
   var unitsPerPackage = Number(r.unitsPerPackage) || 1;
   /* quantas unidades vendáveis essa única fornada rende */
   var packagesFromBatch = Math.floor(yieldQty / unitsPerPackage);
+  function buildRow(u, getter){
+    var item = getter(u.ingredientId || u.packagingId); if (!item) return null;
+    var needed = Number(u.qty) || 0;
+    var packQty = Number(item.packageQty) || 0;
+    var packPrice = Number(item.packagePrice) || 0;
+    var packs = packQty > 0 ? Math.ceil(needed / packQty - 1e-9) : 0;
+    return { item:item, needed:needed, unit:item.unit || 'un', packQty:packQty, packPrice:packPrice, packs:packs, fullCost:packs * packPrice };
+  }
+  var ingRows = r.ingredientUsage.map(function(u){ return buildRow(u, getIngredient); }).filter(Boolean);
+  var packRows = r.packagingUsage.map(function(u){
+    /* embalagem usa "qty por unidade vendida" — pra virar "quantidade
+       da fornada" (mesma base do ingrediente), multiplica pelas
+       embalagens que essa fornada rende. */
+    return buildRow({ packagingId:u.packagingId, qty:(Number(u.qty)||0) * packagesFromBatch }, getPackagingItem);
+  }).filter(Boolean);
+  var rows = ingRows.concat(packRows);
+  var totalFull = rows.reduce(function(s,x){ return s + x.fullCost; }, 0);
   var sellPrice = Number(p.price) || 0;
   /* recuperar o gasto é sobre RECEITA, não lucro — o dinheiro que já
      saiu do bolso comprando os potes só volta quando entra venda, e
@@ -1126,11 +1136,23 @@ function pageFinanceReposicao(){
   }
 
   var tiles = '<div class="stat-grid">' +
-    statTile('Compra de hoje', currency(plan.firstBuyCost), 'cart', 'brand', 'um lote de cada insumo') +
+    statTile('Compra de hoje', currency(plan.firstBuyCost), 'cart', 'brand', plan.rows.length+' itens (ingrediente + embalagem)') +
     statTile('Gasto em 6 meses', currency(plan.totalCost), 'wallet', '', plan.rows.reduce(function(s,r){ return s + r.buysInHorizon; }, 0)+' compras no total') +
     statTile('Acaba primeiro', esc(plan.rows[0].item.name), 'alert', 'neg', (plan.rows[0].kind==='packaging'?'embalagem · ':'ingrediente · ')+'em '+Math.round(plan.rows[0].cycleDays)+' dias · '+shortDate(dayOffsetToDate(plan.rows[0].cycleDays))) +
     statTile('Dura mais', esc(plan.rows[plan.rows.length-1].item.name), 'check', 'pos', (plan.rows[plan.rows.length-1].kind==='packaging'?'embalagem · ':'ingrediente · ')+Math.round(plan.rows[plan.rows.length-1].cycleDays)+' dias') +
   '</div>';
+
+  /* Se "Compra de hoje" parecer baixo demais, é quase sempre porque um
+     insumo cadastrado (às vezes uma embalagem) não entrou na conta —
+     e isso só acontece por um destes dois motivos, nunca por a conta
+     "esquecer" de embalagem. Deixar isso explícito aqui evita o
+     usuário achar que o cálculo está quebrado. */
+  var idleWithPrice = plan.idle.filter(function(r){ return Number(r.item.packagePrice) > 0; });
+  var idleBanner = idleWithPrice.length
+    ? '<div class="banner banner-warn">'+icon('alert',16)+'<span><b>'+idleWithPrice.length+' item(ns) cadastrado(s) de fora desta conta:</b> ' +
+        esc(idleWithPrice.map(function(r){ return r.item.name + (r.kind==='packaging'?' (embalagem)':' (ingrediente)'); }).join(', ')) +
+        '. Isso acontece quando o item não está em <b>nenhuma receita</b> (Financeiro → Receitas → "Embalagem por unidade vendida"/ingredientes), ou quando o(s) doce(s) que o usam têm <b>ritmo de venda zerado</b> no card abaixo.</span></div>'
+    : '';
 
   var chart = '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('calendar',18,'var(--brand)')+'<h3 style="flex:1">Quando cada insumo acaba</h3>' +
@@ -1175,7 +1197,7 @@ function pageFinanceReposicao(){
     '<p class="hint" style="margin-top:-8px">Pra que serve: vendendo no ritmo configurado acima, mostra dia a dia o lucro que vai entrando e onde ele cai de repente porque um insumo acabou e precisou ser recomprado.</p>' +
     cashFlowChart(sim) + '</div>';
 
-  return rateForm + tiles + chart + table + simTiles + simChart;
+  return rateForm + tiles + idleBanner + chart + table + simTiles + simChart;
 }
 
 /* =========================================================
@@ -3049,24 +3071,46 @@ function pageFinanceMetas(){
   var results = computeSalesGoals();
   var mixMode = !!g.useMix;
 
+  var isRitmoMode = g.goalMode === 'ritmo';
+  var sp = isRitmoMode ? computeSingleProductProjection() : null;
+
   var form = '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('sparkle',18,'var(--brand)')+'<h3 style="flex:1">O que você quer alcançar</h3></div>' +
 
     '<div class="field"><span class="field-label">Sua meta é…</span><div class="seg">' +
-      '<button type="button" class="seg-btn'+(g.goalMode!=='faturamento'?' on':'')+'" data-action="setGoalMode" data-mode="lucro">'+icon('coin',15)+' Lucro que quero no bolso</button>' +
+      '<button type="button" class="seg-btn'+(g.goalMode!=='faturamento'&&g.goalMode!=='ritmo'?' on':'')+'" data-action="setGoalMode" data-mode="lucro">'+icon('coin',15)+' Lucro que quero no bolso</button>' +
       '<button type="button" class="seg-btn'+(g.goalMode==='faturamento'?' on':'')+'" data-action="setGoalMode" data-mode="faturamento">'+icon('chart',15)+' Faturamento no mês</button>' +
+      '<button type="button" class="seg-btn'+(g.goalMode==='ritmo'?' on':'')+'" data-action="setGoalMode" data-mode="ritmo">'+icon('sun',15)+' Lucro por vendas diárias</button>' +
     '</div>' +
     '<p class="hint">'+(g.goalMode==='faturamento'
       ? 'Faturamento é tudo que entra. Convertemos para lucro usando a margem média dos seus doces ('+(averageMarginRatio()*100).toFixed(0)+'%).'
+      : g.goalMode==='ritmo'
+      ? 'Sem meta pra bater — só "se eu vender X de um doce por dia, quanto entra e quanto sobra".'
       : 'Lucro é o que sobra depois de pagar ingredientes, embalagem, mão de obra, custo fixo e imposto. É o número que importa.')+'</p></div>' +
 
-    '<div class="fin-grid-2">' +
-      (g.goalMode === 'faturamento'
-        ? '<div class="field"><label for="g-fat">Faturamento desejado no mês (R$)</label><input class="input" id="g-fat" type="number" inputmode="decimal" step="50" value="'+(g.monthlyGoal||0)+'" data-action="setGoalMonthly"></div>'
-        : '<div class="field"><label for="g-lucro">Lucro desejado no mês (R$)</label><input class="input" id="g-lucro" type="number" inputmode="decimal" step="50" value="'+(g.profitGoal||0)+'" data-action="setGoalProfit"></div>') +
-      '<div class="field"><label for="g-dias">Dias trabalhados por semana</label><input class="input" id="g-dias" type="number" inputmode="numeric" min="1" max="7" step="1" value="'+(g.daysPerWeek||0)+'" data-action="setGoalDays"></div>' +
-    '</div>' +
-    '<div class="fin-grid-3">' +
+    (isRitmoMode
+      ? (!sp ? '<p class="empty-note">Cadastre um doce primeiro.</p>' :
+        '<div class="fin-grid-3">' +
+          '<div class="field"><label for="ms-produto">Doce</label><select class="input" id="ms-produto" data-action="setMetasSingleProduct">' +
+            state.products.filter(function(p){ return !isHidden(p); }).map(function(p){ return '<option value="'+p.id+'"'+(p.id===sp.product.id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('') +
+          '</select></div>' +
+          '<div class="field"><label for="ms-qtd">Quantos por dia</label><input class="input" id="ms-qtd" type="number" inputmode="decimal" min="0" step="0.5" value="'+sp.qty+'" data-action="setMetasSingleQty"></div>' +
+          '<div class="field"><label for="g-dias">Dias trabalhados por semana</label><input class="input" id="g-dias" type="number" inputmode="numeric" min="1" max="7" step="1" value="'+(g.daysPerWeek||0)+'" data-action="setGoalDays"></div>' +
+        '</div>' +
+        '<div class="stat-grid" style="margin-top:16px">' +
+          statTile('Faturamento/dia', currency(sp.revenueDay), 'coin') +
+          statTile('Lucro/dia', currency(sp.profitDay), 'sun', sp.profitDay>0?'pos':'neg') +
+          statTile('Faturamento no mês', currency(sp.revenueMonth), 'chart', '', sp.activeDaysMonth.toFixed(1)+' dias trabalhados') +
+          statTile('Lucro no mês', currency(sp.profitMonth), 'wallet', sp.profitMonth>0?'pos':'neg') +
+        '</div>' +
+        '<p class="hint" style="margin-top:10px">Já inclui ingredientes, embalagem e mão de obra de cada <b>'+esc(sp.product.name)+'</b>. Não desconta o custo fixo do mês, porque esse custo é do negócio inteiro, não de um doce isolado.</p>')
+      : '<div class="fin-grid-2">' +
+        (g.goalMode === 'faturamento'
+          ? '<div class="field"><label for="g-fat">Faturamento desejado no mês (R$)</label><input class="input" id="g-fat" type="number" inputmode="decimal" step="50" value="'+(g.monthlyGoal||0)+'" data-action="setGoalMonthly"></div>'
+          : '<div class="field"><label for="g-lucro">Lucro desejado no mês (R$)</label><input class="input" id="g-lucro" type="number" inputmode="decimal" step="50" value="'+(g.profitGoal||0)+'" data-action="setGoalProfit"></div>') +
+        '<div class="field"><label for="g-dias">Dias trabalhados por semana</label><input class="input" id="g-dias" type="number" inputmode="numeric" min="1" max="7" step="1" value="'+(g.daysPerWeek||0)+'" data-action="setGoalDays"></div>' +
+      '</div>') +
+    '<div class="fin-grid-3" style="margin-top:14px">' +
       '<div class="field"><label for="g-mei">Taxa MEI mensal (DAS)</label><input class="input" id="g-mei" type="number" inputmode="decimal" step="1" value="'+(g.meiMonthlyFee||0)+'" data-action="setGoalMeiFee"></div>' +
       '<div class="field"><label for="g-fixo">Custo fixo mensal (R$)</label><input class="input" id="g-fixo" type="number" inputmode="decimal" step="10" value="'+(g.fixedMonthlyCost||0)+'" data-action="setGoalFixed"></div>' +
       '<div class="field"><label for="g-hora">Custo da sua hora (R$)</label><input class="input" id="g-hora" type="number" inputmode="decimal" step="1" value="'+(g.laborHourCost||0)+'" data-action="setGoalHour"></div>' +
@@ -3075,7 +3119,7 @@ function pageFinanceMetas(){
     '<label class="check-row"><input type="checkbox" data-action="toggleGoalTax" '+(g.includeTax?'checked':'')+'> Considerar a taxa MEI no que preciso cobrir</label>' +
   '</div>';
 
-  var overheadCard = '<div class="stat-grid">' +
+  var overheadCard = isRitmoMode ? '' : '<div class="stat-grid">' +
     statTile('Custo fixo do mês', currency(monthlyOverhead()), 'wallet', '', 'custo fixo'+(g.includeTax?' + MEI':'')+' — os insumos saem de cada venda') +
     statTile('Meta de lucro', currency(monthlyProfitTarget()), 'coin', 'brand') +
     statTile('Lucro total necessário', currency(monthlyOverhead()+monthlyProfitTarget()), 'chart', 'pos', 'é isso que as vendas precisam gerar') +
@@ -3083,7 +3127,7 @@ function pageFinanceMetas(){
 
   /* cenário de mix */
   var mix = computeMixScenario();
-  var mixCard = '<div class="admin-card">' +
+  var mixCard = isRitmoMode ? '' : '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('scale',18,'var(--brand)')+'<h3 style="flex:1">Vendendo mais de um doce</h3>' +
       '<label class="check-row" style="min-height:0"><input type="checkbox" data-action="toggleUseMix" '+(mixMode?'checked':'')+'> Usar mix</label></div>' +
     '<p class="hint" style="margin:-10px 0 14px">Na vida real você não vende só um produto. Diga a proporção estimada de cada doce nas suas vendas e veja quanto precisa vender no total.</p>' +
@@ -3174,58 +3218,28 @@ function pageFinanceMetas(){
     '</div>';
   }).join('');
 
-  /* ritmo real de venda → faturamento e lucro que ele gera de verdade
-     (mão inversa do mix acima). Duas visões possíveis: todos os doces
-     no ritmo já configurado (usado também em Reposição), ou um doce
-     isolado com uma quantidade avulsa — pra responder rapidinho
-     "e se eu vender X pão de mel por dia" sem mexer no ritmo real. */
-  var rateView = state.metasRateView === 'umDoce' ? 'umDoce' : 'todos';
-  var viewSeg = '<div class="seg" style="margin-bottom:16px">' +
-    '<button type="button" class="seg-btn'+(rateView!=='umDoce'?' on':'')+'" data-action="setMetasRateView" data-view="todos">'+icon('chart',15)+' Ritmo configurado</button>' +
-    '<button type="button" class="seg-btn'+(rateView==='umDoce'?' on':'')+'" data-action="setMetasRateView" data-view="umDoce">'+icon('cake',15)+' Lucro por vendas diárias</button>' +
-  '</div>';
-
-  var rateResult;
-  if (rateView === 'umDoce'){
-    var sp = computeSingleProductProjection();
-    rateResult = !sp ? '<p class="empty-note">Cadastre um doce primeiro.</p>' :
-      '<div class="fin-grid-2" style="margin-bottom:16px">' +
-        '<div class="field" style="margin:0"><label for="ms-produto">Doce</label><select class="input sm" id="ms-produto" data-action="setMetasSingleProduct">' +
-          state.products.filter(function(p){ return !isHidden(p); }).map(function(p){ return '<option value="'+p.id+'"'+(p.id===sp.product.id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('') +
-        '</select></div>' +
-        '<div class="field" style="margin:0"><label for="ms-qtd">Quantos por dia</label><input class="input sm" id="ms-qtd" type="number" inputmode="decimal" min="0" step="0.5" value="'+sp.qty+'" data-action="setMetasSingleQty"></div>' +
-      '</div>' +
-      '<div class="stat-grid">' +
-        statTile('Faturamento/dia', currency(sp.revenueDay), 'coin') +
-        statTile('Lucro/dia', currency(sp.profitDay), 'sun', sp.profitDay>0?'pos':'neg') +
-        statTile('Faturamento no mês', currency(sp.revenueMonth), 'chart', '', sp.activeDaysMonth.toFixed(1)+' dias trabalhados') +
-        statTile('Lucro no mês', currency(sp.profitMonth), 'wallet', sp.profitMonth>0?'pos':'neg') +
-      '</div>' +
-      '<p class="hint" style="margin-top:10px">Já inclui ingredientes, embalagem e mão de obra de cada <b>'+esc(sp.product.name)+'</b>. Não desconta o custo fixo do mês, porque esse custo é do negócio inteiro, não de um doce isolado.</p>';
-  } else {
-    var rp = computeRateProjection();
-    rateResult = !rp.anyRate
-      ? '<p class="empty-note">Preencha o ritmo de venda no card abaixo.</p>'
-      : '<div class="stat-grid">' +
-          statTile('Faturamento/dia', currency(rp.revenueDay), 'coin') +
-          statTile('Lucro/dia', currency(rp.profitDay), 'sun', rp.profitDay>0?'pos':'neg') +
-          statTile('Faturamento no mês', currency(rp.revenueMonth), 'chart', '', rp.activeDaysMonth.toFixed(1)+' dias trabalhados') +
-          statTile('Lucro no mês', currency(rp.profitMonth), 'wallet', rp.hitsGoal?'pos':'neg', 'já descontando custo fixo'+(g.includeTax?' e MEI':'')) +
-        '</div>' +
-        '<p class="hint" style="margin-top:10px">'+(rp.hitsGoal
-          ? 'Isso bate a meta de <b>'+currency(rp.target)+'</b> — sobra <b>'+currency(rp.gap)+'</b>.'
-          : 'Falta <b>'+currency(-rp.gap)+'</b> para a meta de <b>'+currency(rp.target)+'</b>.')+'</p>';
-  }
-
+  /* ritmo real de venda (o mesmo configurado em Reposição) → quanto
+     de faturamento e lucro ele já está trazendo de fato, pra todos os
+     doces juntos. Mão inversa do mix: aqui não se escolhe uma meta, só
+     se lê o resultado do ritmo real. */
+  var rp = computeRateProjection();
   var rateCard = '<div class="admin-card">' +
-      '<div class="admin-card-head">'+icon('sun',18,'var(--brand)')+'<h3 style="flex:1">Lucro pelo ritmo de venda</h3></div>' +
-      '<p class="hint" style="margin:-10px 0 14px">Pra que serve: saber quanto de faturamento e lucro um ritmo de venda realmente traz — pra todos os doces configurados de uma vez, ou pra um doce isolado com uma quantidade avulsa.</p>' +
-      viewSeg + rateResult +
-    '</div>' +
-    (rateView === 'todos' ? dailyRateCard() : '');
+      '<div class="admin-card-head">'+icon('chart',18,'var(--brand)')+'<h3 style="flex:1">Vendendo no ritmo configurado</h3></div>' +
+      '<p class="hint" style="margin:-10px 0 14px">Pra que serve: ver o faturamento e lucro reais do ritmo de venda já preenchido no card abaixo (o mesmo usado em Reposição) — sem escolher meta nenhuma.</p>' +
+      (!rp.anyRate
+        ? '<p class="empty-note">Preencha o ritmo de venda no card abaixo.</p>'
+        : '<div class="stat-grid">' +
+            statTile('Faturamento/dia', currency(rp.revenueDay), 'coin') +
+            statTile('Lucro/dia', currency(rp.profitDay), 'sun', rp.profitDay>0?'pos':'neg') +
+            statTile('Faturamento no mês', currency(rp.revenueMonth), 'chart', '', rp.activeDaysMonth.toFixed(1)+' dias trabalhados') +
+            statTile('Lucro no mês', currency(rp.profitMonth), 'wallet', rp.profitMonth>0?'pos':'neg', 'já descontando custo fixo'+(g.includeTax?' e MEI':'')) +
+          '</div>') +
+    '</div>' + dailyRateCard();
 
-  return form + overheadCard + rateCard + mixCard +
+  var cenarioPorDoce = isRitmoMode ? '' :
     '<p class="field-label" style="margin:26px 0 12px">Cenário por doce</p>' + cards;
+
+  return form + overheadCard + rateCard + mixCard + cenarioPorDoce;
 }
 
 /* ---------- compras: comprar tudo do zero ---------- */
@@ -3589,8 +3603,8 @@ function pageFinanceHistorico(){
    pra manter em sincronia. */
 var FINANCE_GROUPS = [
   { key:'geral', label:'Visão geral', icon:'scale',
-    why:'Como o negócio está indo: lucro por doce e progresso das metas do mês.',
-    tabs:[['resumo','Resumo','scale'], ['metas','Metas','sparkle']] },
+    why:'Como o negócio está indo: lucro por doce.',
+    tabs:[['resumo','Resumo','scale']] },
   { key:'insumos', label:'Insumos', icon:'package',
     why:'Cadastro de ingredientes e embalagens: preço, onde comprou, e como isso mudou no tempo.',
     tabs:[['ingredientes','Ingredientes','package'], ['embalagens','Embalagens','truck'], ['historico','Histórico de preço','chart']] },
@@ -3598,8 +3612,8 @@ var FINANCE_GROUPS = [
     why:'Monte a receita de cada doce — é ela que alimenta todo o resto (custo, lucro, compras).',
     tabs:[['receitas','Receitas','cake']] },
   { key:'producao', label:'Produção', icon:'cart',
-    why:'Planeje uma fornada: quanto comprar, quando o insumo acaba, e o prejuízo quando algo dá errado.',
-    tabs:[['compras','Compras','cart'], ['reposicao','Reposição','refresh'], ['perdas','Perdas','alert']] }
+    why:'Metas, planejamento de fornada e reposição: quanto vender, quanto comprar, quando o insumo acaba, e o prejuízo quando algo dá errado.',
+    tabs:[['metas','Metas','sparkle'], ['compras','Compras','cart'], ['reposicao','Reposição','refresh'], ['perdas','Perdas','alert']] }
 ];
 function financeGroupFor(tab){
   return FINANCE_GROUPS.filter(function(g){ return g.tabs.some(function(x){ return x[0] === tab; }); })[0] || FINANCE_GROUPS[0];
@@ -4232,7 +4246,6 @@ document.addEventListener('click', function(e){
 
   /* ---- metas / análises / compras ---- */
   else if (action === 'setAnalyticsPeriod') { state.analyticsPeriod = el.dataset.period; render(); }
-  else if (action === 'setMetasRateView') { state.metasRateView = el.dataset.view; render(); }
   else if (action === 'setGoalMode') { state.financialGoals.goalMode = el.dataset.mode; dbSet('settings/financeGoals', state.financialGoals); render(); }
   else if (action === 'toggleUseMix') { state.financialGoals.useMix = !state.financialGoals.useMix; dbSet('settings/financeGoals', state.financialGoals); render(); }
   else if (action === 'resetRate') { state.consumptionRate = {}; render(); toast('Voltou para as vendas reais dos últimos 30 dias.', 'ok'); }
