@@ -32,6 +32,13 @@ var firebaseConfig = {
   messagingSenderId: "780236289961",
   appId: "1:780236289961:web:c4d6ce274d49645d84b6b8"
 };
+/* Certificado Web Push (VAPID) do Cloud Messaging — chave PÚBLICA,
+   feita pra ir no código do cliente (é ela que o navegador usa pra
+   provar ao servidor de push que o token pertence a este app). Só
+   destrava o lado de INSCREVER o dispositivo; ENVIAR o push no
+   momento certo ainda depende de uma Cloud Function, que não existe
+   ainda — ver showAdminNotification() e setupPushMessaging(). */
+var FCM_VAPID_KEY = "BF11sayYP8bbJedUpEmFdqZMntzd-Q62ZmXcFdNsb6dgo1qVRxNKDmVskrMatA23f2KMsXqXQ92vl8bJQ3bz_hs";
 
 var ASSET_FILES = {
   logoCircle: "Logo Circle.png",
@@ -1121,6 +1128,7 @@ function syncDoc(collectionName, docId, onData){
 }
 var authGatedUnsubs = [];
 function attachAuthGatedSync(){
+  setupPushMessaging();
   authGatedUnsubs.push(syncCollection('orders', function(val){
     state.orders = objToArray(val).sort(function(a,b){ return Number(b.id) - Number(a.id); });
     reconcileStock();
@@ -2276,8 +2284,11 @@ function ReminderBanner(){
 
 /* Via o service worker quando ele já estiver pronto (sobrevive à aba
    minimizada/segundo plano melhor), senão cai pra `new Notification`
-   direto — nenhum dos dois funciona com o navegador fechado de
-   verdade, isso exigiria push do servidor (ver sw.js). */
+   direto. Isso cobre o navegador ABERTO em segundo plano; o aviso
+   automático de "faltam 10 minutos" com o navegador FECHADO ainda
+   depende de uma Cloud Function que dispare um push (ver
+   setupPushMessaging() logo abaixo — a inscrição já está pronta, só
+   falta quem envie). */
 function showAdminNotification(title, body){
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   if (navigator.serviceWorker && navigator.serviceWorker.controller){
@@ -2287,6 +2298,23 @@ function showAdminNotification(title, body){
   } else {
     try { new Notification(title, { body:body }); } catch(e){}
   }
+}
+/* Registra este dispositivo pra receber push do Cloud Messaging e
+   guarda o token no Firestore. Só a metade "inscrever" do push — a
+   metade "enviar no momento certo" precisa de uma Cloud Function
+   (ainda não existe) lendo essa coleção e chamando o FCM. Chamada só
+   quando a notificação já está autorizada, então não pede permissão
+   por conta própria. */
+function setupPushMessaging(){
+  if (!FIREBASE_READY || typeof firebase === 'undefined' || !firebase.messaging) return;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  if (!('serviceWorker' in navigator) || !state.authUser) return;
+  navigator.serviceWorker.ready.then(function(reg){
+    return firebase.messaging().getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg });
+  }).then(function(token){
+    if (!token) return;
+    dbSet('pushTokens/'+token, { token:token, uid: state.authUser.uid, updatedAt: new Date().toISOString() });
+  }).catch(function(e){ console.warn('Não consegui registrar push:', e); });
 }
 function checkPickupReminders(){
   var nowMs = Date.now();
@@ -4360,7 +4388,11 @@ document.addEventListener('click', function(e){
   }
   else if (action === 'enableNotifications') {
     if (typeof Notification === 'undefined') return;
-    Notification.requestPermission().then(function(perm){ state.notifPermission = perm; render(); });
+    Notification.requestPermission().then(function(perm){
+      state.notifPermission = perm;
+      if (perm === 'granted') setupPushMessaging();
+      render();
+    });
   }
 
   /* ---- insumos ---- */
