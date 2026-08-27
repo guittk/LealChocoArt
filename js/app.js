@@ -207,13 +207,13 @@ var state = {
   /* admin */
   adminTab: 'produtos',
   financeTab: 'resumo',
+  analysesTab: 'vendas',
   addingProduct: false,
   addingLocation: false,
   addingScheduleRule: false,
   addingExtraSlot: false,
   addingIngredient: false,
   addingPackaging: false,
-  addingLoss: false,
   metasSingleProductId: null,
   metasSingleQty: 5,
   lossDraft: null,        /* rascunho da perda em edição: { productId, batches, date, note, includeLabor, includePackaging, lostIngredientIds } */
@@ -2337,6 +2337,22 @@ function labeledField(label, innerHtml, extraStyle){
   return '<div style="display:flex;flex-direction:column;gap:5px;'+(extraStyle||'')+'">' +
     '<span style="font-size:11px;font-weight:800;color:var(--ink-3);letter-spacing:.05em;text-transform:uppercase">'+label+'</span>' + innerHtml + '</div>';
 }
+/* Toggle no padrão visual do app (chip + caixinha), em vez do
+   checkbox nativo cru que `.check-row` usava — consistente com
+   history-chip/avail-toggle, que já são botões, não inputs. */
+function toggleChip(label, checked, action, extraAttrs, style){
+  return '<button type="button" class="toggle-chip'+(checked?' on':'')+'" data-action="'+action+'"'+(extraAttrs?' '+extraAttrs:'')+
+    ' role="switch" aria-checked="'+(checked?'true':'false')+'"'+(style?' style="'+style+'"':'')+'>' +
+    '<span class="toggle-chip-box">'+(checked?icon('check',12):'')+'</span>' + esc(label) + '</button>';
+}
+/* Mesma caixinha, sem o chip ao redor — pra caber numa célula de
+   tabela estreita (checklist de perdas) sem o rótulo, que já vem da
+   coluna vizinha. */
+function toggleBox(checked, action, extraAttrs, ariaLabel){
+  return '<button type="button" class="toggle-chip-btn'+(checked?' on':'')+'" data-action="'+action+'"'+(extraAttrs?' '+extraAttrs:'')+
+    ' role="switch" aria-checked="'+(checked?'true':'false')+'" aria-label="'+esc(ariaLabel)+'">' +
+    '<span class="toggle-chip-box">'+(checked?icon('check',12):'')+'</span></button>';
+}
 
 /* =========================================================
    ADMIN — doces
@@ -2751,9 +2767,7 @@ function pageAdminLocais(){
       (hidden ? '<p class="hint" style="margin-top:-8px;margin-bottom:14px">'+icon('info',12)+' Este ponto não aparece no site nem entra na agenda pública — o cadastro, o mapa e as regras de venda continuam salvos.</p>' : '') +
       '<div class="field"><label for="la-'+l.id+'">Endereço (opcional)</label>' +
         '<input class="input" id="la-'+l.id+'" placeholder="Ex: Rua das Flores, 123" value="'+esc(l.address||'')+'" data-action="setLocAddress" data-locid="'+l.id+'"></div>' +
-      '<label class="check-row" style="margin-bottom:12px">' +
-        '<input type="checkbox" data-action="toggleOrdersOnly" data-locid="'+l.id+'" '+(l.ordersOnly?'checked':'')+'> Somente encomenda combinada (não entra na agenda de vendas)' +
-      '</label>' +
+      '<div style="margin-bottom:12px">'+toggleChip('Somente encomenda combinada (não entra na agenda de vendas)', !!l.ordersOnly, 'toggleOrdersOnly', 'data-locid="'+l.id+'"')+'</div>' +
       '<div class="field"><label for="lm-'+l.id+'">Imagem do mapa</label>' +
         '<input class="file-input" id="lm-'+l.id+'" type="file" accept="image/*" data-action="uploadMap" data-locid="'+l.id+'"></div>' +
       MapWithPin(l, true) +
@@ -2930,14 +2944,49 @@ function dashPanel(title, iconName, bodyHtml, side){
     (side ? '<span class="sp">'+side+'</span>' : '')+'</p>'+bodyHtml+'</div>';
 }
 
+/* =========================================================
+   ANÁLISES
+   Vendas (o que já aconteceu) + Metas/Compras/Reposição (planejamento
+   — a Julia usa essas três só pra olhar números, não pra cadastrar
+   nada, por isso moraram pra cá em vez de dentro de Financeiro) + um
+   simulador de Perdas que gera um registro de verdade em Financeiro →
+   Perdas quando o prejuízo é real, não só hipotético.
+========================================================= */
+var ANALYSES_TABS = [
+  ['vendas','Vendas','chart'], ['metas','Metas','sparkle'],
+  ['compras','Compras','cart'], ['reposicao','Reposição','refresh'],
+  ['perdas','Perdas','alert']
+];
+function pageAnalysesPerdaSimulada(){
+  if (!state.lossDraft){
+    var prods = state.products.filter(function(p){ return !isHidden(p) && ensureRecipe(p).ingredientUsage.length > 0; });
+    state.lossDraft = makeLossDraft(prods.length ? prods[0].id : '');
+  }
+  return '<p class="hint" style="margin:-6px 0 18px">Pra que serve: simular quanto custaria uma fornada perdida antes de decidir se foi prejuízo de verdade. Salvando, o registro aparece em <b>Financeiro → Perdas</b>.</p>' +
+    lossDraftForm();
+}
 function pageAdminAnalises(){
+  var t = state.analysesTab || 'vendas';
+  var nav = '<div class="subtab-row">' + ANALYSES_TABS.map(function(x){
+    return '<button class="subtab'+(t===x[0]?' active':'')+'" data-action="setAnalysesTab" data-atab="'+x[0]+'">'+icon(x[2],13)+' '+x[1]+'</button>';
+  }).join('') + '</div>';
+
+  var body = '';
+  if (t === 'metas') body = pageFinanceMetas();
+  else if (t === 'compras') body = pageFinanceCompras();
+  else if (t === 'reposicao') body = pageFinanceReposicao();
+  else if (t === 'perdas') body = pageAnalysesPerdaSimulada();
+  else body = pageAnalysesVendas();
+  return nav + body;
+}
+function pageAnalysesVendas(){
   var a = computeAnalytics();
   var periods = [['30','Últimos 30 dias'],['mes','Este mês'],['tudo','Desde o começo']];
   var head = '<div class="filter-bar">' +
     '<div class="subtab-row" style="margin:0">' + periods.map(function(p){
       return '<button class="subtab'+(state.analyticsPeriod===p[0]?' active':'')+'" data-action="setAnalyticsPeriod" data-period="'+p[0]+'">'+p[1]+'</button>';
     }).join('') + '</div>' +
-    '<label class="check-row" style="margin-left:auto"><input type="checkbox" data-action="toggleOnlyDone" '+(state.analyticsOnlyDone?'checked':'')+'> Contar só concluídos</label>' +
+    toggleChip('Contar só concluídos', state.analyticsOnlyDone, 'toggleOnlyDone', '', 'margin-left:auto') +
     '<button class="btn-ghost" data-action="exportAnalyticsCsv">'+icon('download',13)+' Exportar CSV</button>' +
   '</div>';
 
@@ -3316,13 +3365,20 @@ function pageFinanceMetas(){
           : '<div class="field"><label for="g-lucro">Lucro desejado no mês (R$)</label><input class="input" id="g-lucro" type="number" inputmode="decimal" step="50" value="'+(g.profitGoal||0)+'" data-action="setGoalProfit"></div>') +
         '<div class="field"><label for="g-dias">Dias trabalhados por semana</label><input class="input" id="g-dias" type="number" inputmode="numeric" min="1" max="7" step="1" value="'+(g.daysPerWeek||0)+'" data-action="setGoalDays"></div>' +
       '</div>') +
-    '<div class="fin-grid-3" style="margin-top:14px">' +
+  '</div>';
+
+  /* Custo fixo e MEI valem pra qualquer um dos 3 modos acima — não são
+     parte da "meta" escolhida, são do negócio inteiro. Por isso viraram
+     um card à parte, em vez de ficarem colados embaixo do seletor como
+     se pertencessem só ao modo selecionado. */
+  var overheadForm = '<div class="admin-card">' +
+    '<div class="admin-card-head">'+icon('wallet',18,'var(--brand)')+'<h3 style="flex:1">Custo fixo do negócio</h3></div>' +
+    '<div class="fin-grid-2">' +
       '<div class="field"><label for="g-mei">Taxa MEI mensal (DAS)</label><input class="input" id="g-mei" type="number" inputmode="decimal" step="1" value="'+(g.meiMonthlyFee||0)+'" data-action="setGoalMeiFee"></div>' +
       '<div class="field"><label for="g-fixo">Custo fixo mensal (R$)</label><input class="input" id="g-fixo" type="number" inputmode="decimal" step="10" value="'+(g.fixedMonthlyCost||0)+'" data-action="setGoalFixed"></div>' +
-      '<div class="field"><label for="g-hora">Custo da sua hora (R$)</label><input class="input" id="g-hora" type="number" inputmode="decimal" step="1" value="'+(g.laborHourCost||0)+'" data-action="setGoalHour"></div>' +
     '</div>' +
-    '<p class="hint" style="margin:-6px 0 12px">Custo fixo é gás, energia, transporte até o ponto — o que sai todo mês independente de quanto você vende. O custo da hora entra no preço de cada doce pelo tempo do lote.</p>' +
-    '<label class="check-row"><input type="checkbox" data-action="toggleGoalTax" '+(g.includeTax?'checked':'')+'> Considerar a taxa MEI no que preciso cobrir</label>' +
+    '<p class="hint" style="margin:-6px 0 12px">Gás, energia, transporte até o ponto — o que sai todo mês independente de quanto você vende. Vale pros três modos acima, não só pra meta escolhida.</p>' +
+    toggleChip('Considerar a taxa MEI no que preciso cobrir', !!g.includeTax, 'toggleGoalTax') +
   '</div>';
 
   var overheadCard = isRitmoMode ? '' : '<div class="stat-grid">' +
@@ -3335,7 +3391,7 @@ function pageFinanceMetas(){
   var mix = computeMixScenario();
   var mixCard = isRitmoMode ? '' : '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('scale',18,'var(--brand)')+'<h3 style="flex:1">Vendendo mais de um doce</h3>' +
-      '<label class="check-row" style="min-height:0"><input type="checkbox" data-action="toggleUseMix" '+(mixMode?'checked':'')+'> Usar mix</label></div>' +
+      toggleChip('Usar mix', mixMode, 'toggleUseMix') + '</div>' +
     '<p class="hint" style="margin:-10px 0 14px">Na vida real você não vende só um produto. Diga a proporção estimada de cada doce nas suas vendas e veja quanto precisa vender no total.</p>' +
     (mixMode && mix
       ? '<div class="fin-grid-3" style="margin-bottom:14px">' +
@@ -3427,7 +3483,7 @@ function pageFinanceMetas(){
   var cenarioPorDoce = isRitmoMode ? '' :
     '<p class="field-label" style="margin:26px 0 12px">Cenário por doce</p>' + cards;
 
-  return form + overheadCard + mixCard + cenarioPorDoce;
+  return form + overheadForm + overheadCard + mixCard + cenarioPorDoce;
 }
 
 /* ---------- compras: comprar tudo do zero ---------- */
@@ -3530,16 +3586,16 @@ function lossDraftForm(){
     '<thead><tr><th></th><th>O que foi perdido</th><th class="n">Quantidade</th><th class="n">Custo</th></tr></thead><tbody>' +
     b.ingredientRows.map(function(row){
       return '<tr>' +
-        '<td><input type="checkbox" data-action="toggleLossDraftIngredient" data-ingid="'+row.ingredient.id+'" '+(row.lost?'checked':'')+' aria-label="'+esc(row.ingredient.name)+' foi perdido"></td>' +
+        '<td>'+toggleBox(row.lost, 'toggleLossDraftIngredient', 'data-ingid="'+row.ingredient.id+'"', row.ingredient.name+' foi perdido')+'</td>' +
         '<td class="k">'+esc(row.ingredient.name)+'</td>' +
         '<td class="n">'+num(row.qty, row.qty % 1 === 0 ? 0 : 1)+' '+esc(row.unit)+'</td>' +
         '<td class="n" style="color:'+(row.lost?'var(--danger)':'var(--ink-3)')+';font-weight:800">'+(row.lost?currency(row.cost):'—')+'</td>' +
       '</tr>';
     }).join('') +
-    '<tr><td><input type="checkbox" data-action="toggleLossDraftLabor" '+(d.includeLabor?'checked':'')+' aria-label="Mão de obra perdida"></td>' +
+    '<tr><td>'+toggleBox(d.includeLabor, 'toggleLossDraftLabor', '', 'Mão de obra perdida')+'</td>' +
       '<td class="k">Mão de obra da fornada</td><td class="n">—</td>' +
       '<td class="n" style="color:'+(d.includeLabor && b.laborCost>0?'var(--danger)':'var(--ink-3)')+';font-weight:800">'+(b.laborAvailable ? (d.includeLabor?currency(b.laborCost):'—') : 'sem custo/hora definido')+'</td></tr>' +
-    '<tr><td><input type="checkbox" data-action="toggleLossDraftPackaging" '+(d.includePackaging?'checked':'')+' aria-label="Embalagem perdida"></td>' +
+    '<tr><td>'+toggleBox(d.includePackaging, 'toggleLossDraftPackaging', '', 'Embalagem perdida')+'</td>' +
       '<td class="k">Embalagem (só se já foi usada)</td><td class="n">—</td>' +
       '<td class="n" style="color:'+(d.includePackaging?'var(--danger)':'var(--ink-3)')+';font-weight:800">'+(d.includePackaging?currency(b.packagingCost):'—')+'</td></tr>' +
     '<tr class="total-row"><td></td><td>Prejuízo desta perda</td><td class="n"></td><td class="n" style="color:var(--danger)">'+currency(b.total)+'</td></tr>' +
@@ -3558,16 +3614,17 @@ function lossDraftForm(){
     checklist +
     '<div style="display:flex;gap:10px;margin-top:16px">' +
       '<button class="btn-primary sm" data-action="createLossEvent">Salvar perda de '+currency(b.total)+'</button>' +
-      '<button class="btn-ghost" data-action="toggleAddLoss">Cancelar</button>' +
+      '<button class="btn-ghost" data-action="resetLossDraft">Limpar</button>' +
     '</div></div>';
 }
 function pageFinancePerdas(){
   var prods = state.products.filter(function(p){ return !isHidden(p); });
   if (!prods.length) return '<div class="slot-empty">Cadastre um doce primeiro.</div>';
 
-  var form = !state.addingLoss
-    ? '<button class="btn-secondary sm" data-action="toggleAddLoss" style="margin-bottom:18px">'+icon('plus',15)+' Registrar perda</button>'
-    : lossDraftForm();
+  /* Registrar uma perda nova acontece em Análises → Perdas (é lá que
+     dá pra simular o valor antes de decidir se vale registrar) — esta
+     aba é só o histórico do que já foi registrado. */
+  var form = '<p class="hint" style="margin:-6px 0 18px">'+icon('info',12)+' Para registrar uma nova perda, vá em <b>Análises → Perdas</b> — lá dá pra simular o valor antes de salvar.</p>';
 
   if (!state.lossEvents.length) return form + '<p class="empty-note">Nenhuma perda registrada.</p>';
 
@@ -3813,9 +3870,9 @@ var FINANCE_GROUPS = [
   { key:'receitas', label:'Receitas', icon:'cake',
     why:'Monte a receita de cada doce — é ela que alimenta todo o resto (custo, lucro, compras).',
     tabs:[['receitas','Receitas','cake']] },
-  { key:'producao', label:'Produção', icon:'cart',
-    why:'Metas, planejamento de fornada e reposição: quanto vender, quanto comprar, quando o insumo acaba, e o prejuízo quando algo dá errado.',
-    tabs:[['metas','Metas','sparkle'], ['compras','Compras','cart'], ['reposicao','Reposição','refresh'], ['perdas','Perdas','alert']] }
+  { key:'perdas', label:'Perdas', icon:'alert',
+    why:'O que já foi registrado como prejuízo. Para simular e registrar uma perda nova, vá em Análises → Perdas.',
+    tabs:[['perdas','Perdas','alert']] }
 ];
 function financeGroupFor(tab){
   return FINANCE_GROUPS.filter(function(g){ return g.tabs.some(function(x){ return x[0] === tab; }); })[0] || FINANCE_GROUPS[0];
@@ -3841,9 +3898,6 @@ function pageAdminFinanceiro(){
   else if (t === 'ingredientes') body = financeItemsTab('ingredient');
   else if (t === 'embalagens') body = financeItemsTab('packaging');
   else if (t === 'receitas') body = pageFinanceReceitas();
-  else if (t === 'metas') body = pageFinanceMetas();
-  else if (t === 'compras') body = pageFinanceCompras();
-  else if (t === 'reposicao') body = pageFinanceReposicao();
   else if (t === 'perdas') body = pageFinancePerdas();
   else if (t === 'historico') body = pageFinanceHistorico();
   return groupNav + tabNav + why + body;
@@ -4021,6 +4075,7 @@ function currentRoute(){
   if (state.page === 'admin'){
     var parts = ['admin', state.adminTab];
     if (state.adminTab === 'financeiro') parts.push(state.financeTab);
+    else if (state.adminTab === 'analises') parts.push(state.analysesTab);
     return parts.join('/');
   }
   if (state.page === 'track') return state.trackCode ? 'pedido/'+state.trackCode : 'pedido';
@@ -4041,6 +4096,7 @@ function applyRouteFromHash(){
     state.page = 'admin';
     if (parts[1]) state.adminTab = parts[1];
     if (parts[1] === 'financeiro' && parts[2]) state.financeTab = parts[2];
+    if (parts[1] === 'analises' && parts[2]) state.analysesTab = parts[2];
     return;
   }
   if (parts[0] === 'pedido'){
@@ -4156,6 +4212,7 @@ document.addEventListener('click', function(e){
   else if (action === 'closeMenu') { state.menuOpen = false; render(); }
   else if (action === 'adminTab') { state.adminTab = el.dataset.tab; syncRoute(); render(); window.scrollTo({ top:0, behavior:'smooth' }); }
   else if (action === 'financeTab') { state.financeTab = el.dataset.ftab; syncRoute(); render(); }
+  else if (action === 'setAnalysesTab') { state.analysesTab = el.dataset.atab; syncRoute(); render(); }
   else if (action === 'logout') { if (fbAuth) fbAuth.signOut(); }
   else if (action === 'pickAgendaDay') { state.agendaDate = el.dataset.date; render(); }
 
@@ -4260,6 +4317,11 @@ document.addEventListener('click', function(e){
       dbSet('locations/'+lh.id+'/hidden', lh.hidden);
       toast(lh.hidden ? 'Ponto escondido do site.' : 'Ponto visível no site.', 'ok');
     }
+    render();
+  }
+  else if (action === 'toggleOrdersOnly') {
+    var lo = getLocation(el.dataset.locid);
+    if (lo) { lo.ordersOnly = !lo.ordersOnly; dbSet('locations/'+lo.id+'/ordersOnly', lo.ordersOnly); }
     render();
   }
   else if (action === 'removeLocation') {
@@ -4436,13 +4498,9 @@ document.addEventListener('click', function(e){
   }
 
   /* ---- perdas ---- */
-  else if (action === 'toggleAddLoss') {
-    if (state.addingLoss) { state.addingLoss = false; state.lossDraft = null; }
-    else {
-      var lossProds = state.products.filter(function(p){ return !isHidden(p) && ensureRecipe(p).ingredientUsage.length > 0; });
-      state.addingLoss = true;
-      state.lossDraft = makeLossDraft(lossProds.length ? lossProds[0].id : '');
-    }
+  else if (action === 'resetLossDraft') {
+    var lossProds = state.products.filter(function(p){ return !isHidden(p) && ensureRecipe(p).ingredientUsage.length > 0; });
+    state.lossDraft = makeLossDraft(lossProds.length ? lossProds[0].id : '');
     render();
   }
   else if (action === 'createLossEvent') {
@@ -4457,7 +4515,7 @@ document.addEventListener('click', function(e){
     };
     state.lossEvents.unshift(newLoss);
     dbSet('lossEvents/'+newLoss.id, newLoss);
-    state.addingLoss = false; state.lossDraft = null; render(); toast('Perda registrada.', 'ok');
+    state.lossDraft = null; render(); toast('Perda registrada — já aparece em Financeiro → Perdas.', 'ok');
   }
   else if (action === 'removeLossEvent') {
     askConfirm('Excluir este registro de perda?', 'Não afeta o estoque nem os pedidos — só o histórico de prejuízo.', 'Excluir', true, 'deleteLossEvent', el.dataset.id);
@@ -4489,6 +4547,16 @@ document.addEventListener('click', function(e){
   else if (action === 'setAnalyticsPeriod') { state.analyticsPeriod = el.dataset.period; render(); }
   else if (action === 'setGoalMode') { state.financialGoals.goalMode = el.dataset.mode; dbSet('settings/financeGoals', state.financialGoals); render(); }
   else if (action === 'toggleUseMix') { state.financialGoals.useMix = !state.financialGoals.useMix; dbSet('settings/financeGoals', state.financialGoals); render(); }
+  else if (action === 'toggleOnlyDone') { state.analyticsOnlyDone = !state.analyticsOnlyDone; render(); }
+  else if (action === 'toggleGoalTax') { state.financialGoals.includeTax = !state.financialGoals.includeTax; saveGoals(); render(); }
+  else if (action === 'toggleLossDraftIngredient') {
+    var liIdx = state.lossDraft.lostIngredientIds.indexOf(el.dataset.ingid);
+    if (liIdx === -1) state.lossDraft.lostIngredientIds.push(el.dataset.ingid);
+    else state.lossDraft.lostIngredientIds.splice(liIdx, 1);
+    render();
+  }
+  else if (action === 'toggleLossDraftLabor') { state.lossDraft.includeLabor = !state.lossDraft.includeLabor; render(); }
+  else if (action === 'toggleLossDraftPackaging') { state.lossDraft.includePackaging = !state.lossDraft.includePackaging; render(); }
   else if (action === 'resetRate') { state.consumptionRate = {}; render(); toast('Voltou para as vendas reais dos últimos 30 dias.', 'ok'); }
   else if (action === 'planFromPending') {
     var map = {};
@@ -4735,7 +4803,6 @@ document.addEventListener('change', function(e){
   else if (action === 'orderFilterWhen') { state.orderFilter.when = el.value; render(); }
   else if (action === 'orderFilterStatus') { state.orderFilter.status = el.value; render(); }
   else if (action === 'orderFilterPaid') { state.orderFilter.paid = el.value; render(); }
-  else if (action === 'toggleOnlyDone') { state.analyticsOnlyDone = el.checked; render(); }
   else if (action === 'exportAnalyticsCsv') {
     var an = computeAnalytics();
     var rows = [
@@ -4781,7 +4848,6 @@ document.addEventListener('change', function(e){
   else if (action === 'setLocName') { var ln = getLocation(el.dataset.locid); if (ln) { ln.name = el.value; dbSet('locations/'+ln.id+'/name', ln.name); } render(); }
   else if (action === 'setLocAddress') { var la = getLocation(el.dataset.locid); if (la) { la.address = el.value; dbSet('locations/'+la.id+'/address', la.address); } }
   else if (action === 'setPinLabel') { var lp = getLocation(el.dataset.locid); if (lp && lp.pin) { lp.pin.label = el.value; dbSet('locations/'+lp.id+'/pin', lp.pin); } }
-  else if (action === 'toggleOrdersOnly') { var lo = getLocation(el.dataset.locid); if (lo) { lo.ordersOnly = el.checked; dbSet('locations/'+lo.id+'/ordersOnly', lo.ordersOnly); } render(); }
 
   /* agenda */
   else if (action === 'setRuleLocation') { var rL = getScheduleRule(el.dataset.ruleid); if (rL) { rL.locationId = el.value; dbSet('scheduleTemplate/'+rL.id+'/locationId', rL.locationId); } render(); }
@@ -4859,8 +4925,6 @@ document.addEventListener('change', function(e){
   else if (action === 'setGoalDays') { state.financialGoals.daysPerWeek = clamp(Number(el.value) || 0, 0, 7); saveGoals(); render(); }
   else if (action === 'setGoalMeiFee') { state.financialGoals.meiMonthlyFee = Number(el.value) || 0; saveGoals(); render(); }
   else if (action === 'setGoalFixed') { state.financialGoals.fixedMonthlyCost = Number(el.value) || 0; saveGoals(); render(); }
-  else if (action === 'setGoalHour') { state.financialGoals.laborHourCost = Number(el.value) || 0; saveGoals(); render(); }
-  else if (action === 'toggleGoalTax') { state.financialGoals.includeTax = el.checked; saveGoals(); render(); }
   else if (action === 'setMixShare') { state.financialGoals.mix = state.financialGoals.mix || {}; state.financialGoals.mix[el.dataset.id] = Number(el.value) || 0; saveGoals(); render(); }
   else if (action === 'setPlanQty') { state.planQty[el.dataset.id] = Number(el.value) || 0; render(); }
   else if (action === 'setConsumptionRate') { state.consumptionRate[el.dataset.id] = Math.max(0, Number(el.value) || 0); render(); }
@@ -4874,14 +4938,6 @@ document.addEventListener('change', function(e){
     state.lossDraft.lostIngredientIds = allRecipeIngredientIds(newP);
     render();
   }
-  else if (action === 'toggleLossDraftIngredient') {
-    var liIdx = state.lossDraft.lostIngredientIds.indexOf(el.dataset.ingid);
-    if (liIdx === -1) state.lossDraft.lostIngredientIds.push(el.dataset.ingid);
-    else state.lossDraft.lostIngredientIds.splice(liIdx, 1);
-    render();
-  }
-  else if (action === 'toggleLossDraftLabor') { state.lossDraft.includeLabor = el.checked; render(); }
-  else if (action === 'toggleLossDraftPackaging') { state.lossDraft.includePackaging = el.checked; render(); }
   else if (action === 'setLossDraftDate') { state.lossDraft.date = el.value; render(); }
   else if (action === 'setLossDraftNote') { state.lossDraft.note = el.value; }
 });

@@ -698,6 +698,22 @@ textarea.input{height:84px;resize:vertical;padding-top:12px;line-height:1.6;}
 .input.xs{height:38px;font-size:13.5px;padding:0 10px;}
 input[type="checkbox"]{accent-color:var(--brand-2);width:18px;height:18px;cursor:pointer;flex-shrink:0;}
 .check-row{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--ink-2);font-weight:700;cursor:pointer;min-height:44px;}
+.toggle-chip{
+  display:inline-flex;align-items:center;gap:9px;padding:9px 15px 9px 11px;border-radius:999px;
+  border:1.5px solid var(--line);background:var(--surface);font-weight:700;font-size:13px;color:var(--ink-2);
+  min-height:40px;cursor:pointer;transition:border-color .18s var(--ease), background-color .18s var(--ease), color .18s var(--ease);
+}
+.toggle-chip:hover{border-color:var(--brand-2);}
+.toggle-chip.on{border-color:transparent;background:var(--brand-soft);color:var(--brand);}
+.toggle-chip-box{
+  width:18px;height:18px;border-radius:5px;flex-shrink:0;border:1.5px solid var(--line-2);color:#fff;
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:background-color .18s var(--ease), border-color .18s var(--ease);
+}
+.toggle-chip.on .toggle-chip-box{background:var(--brand);border-color:var(--brand);}
+.toggle-chip:focus-visible{outline:2px solid var(--brand-2);outline-offset:2px;}
+.toggle-chip-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;background:none;border:none;cursor:pointer;padding:0;}
+.toggle-chip-btn:focus-visible{outline:2px solid var(--brand-2);outline-offset:2px;border-radius:5px;}
 .hint{font-size:12.5px;color:var(--ink-3);margin-top:7px;line-height:1.55;font-weight:600;}
 .error-text{font-size:13px;color:var(--danger);margin-top:7px;font-weight:800;}
 .error-text:empty{margin:0;}
@@ -797,9 +813,16 @@ input[type="checkbox"]{accent-color:var(--brand-2);width:18px;height:18px;cursor
   transition:border-color .2s var(--ease), box-shadow .2s var(--ease);
 }
 .admin-row:hover{border-color:var(--line-2);box-shadow:var(--sh-sm);}
+/* Quando uma linha tem um admin-row-sub logo depois (info de compra
+   do ingrediente), a linha perde o arredondamento/borda de baixo pra
+   as duas peças ficarem coladas como uma caixa só, em vez de duas
+   caixas se sobrepondo com cantos que não combinam. */
+.admin-row:has(+ .admin-row-sub){
+  border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:none;margin-bottom:0;box-shadow:none;
+}
 .admin-row-sub{
   display:flex;gap:18px;flex-wrap:wrap;background:var(--brand-soft);border:1px solid var(--line);border-top:none;
-  border-radius:0 0 var(--r-md) var(--r-md);padding:8px 16px 10px;margin:-14px 0 10px;font-size:12.5px;font-weight:700;color:var(--ink-2);
+  border-radius:0 0 var(--r-md) var(--r-md);padding:8px 16px 10px;margin:0 0 10px;font-size:12.5px;font-weight:700;color:var(--ink-2);
 }
 .admin-row-sub span{display:inline-flex;align-items:center;gap:5px;}
 .admin-row-sub b{color:var(--brand);}
