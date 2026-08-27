@@ -3375,7 +3375,7 @@ function pageFinanceMetas(){
   '</div>';
 
   /* Resultado vem DEPOIS dos blocos de entrada de dado, nunca dentro
-     deles — mesmo padrão dos outros dois modos (meta → overheadForm →
+     deles — mesmo padrão dos outros dois modos (overheadForm → meta →
      resultado), pra não parecer que cada modo tem seu próprio jeito
      de se organizar na tela. */
   var overheadCard = isRitmoMode
@@ -3488,7 +3488,7 @@ function pageFinanceMetas(){
   var cenarioPorDoce = isRitmoMode ? '' :
     '<p class="field-label" style="margin:26px 0 12px">Cenário por doce</p>' + cards;
 
-  return form + overheadForm + overheadCard + mixCard + cenarioPorDoce;
+  return overheadForm + form + overheadCard + mixCard + cenarioPorDoce;
 }
 
 /* ---------- compras: comprar tudo do zero ---------- */
