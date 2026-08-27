@@ -2953,7 +2953,7 @@ function dashPanel(title, iconName, bodyHtml, side){
    Perdas quando o prejuízo é real, não só hipotético.
 ========================================================= */
 var ANALYSES_TABS = [
-  ['vendas','Vendas','chart'], ['metas','Metas','sparkle'],
+  ['metas','Metas','sparkle'], ['vendas','Vendas','chart'],
   ['compras','Compras','cart'], ['reposicao','Reposição','refresh'],
   ['perdas','Perdas','alert']
 ];
