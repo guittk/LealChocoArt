@@ -208,6 +208,7 @@ var state = {
   confirmDialog: null,          /* { title, text, danger, action, payload } */
   priceChangeModal: null,
   historySelectedKeys: null,
+  editingHistoryEntry: null,   /* { kind, id, date } — linha do histórico de preço em edição */
   orderFilter: { q:'', status:'todos', when:'todos' },
   analyticsPeriod: '30',
   analyticsOnlyDone: false,
@@ -421,6 +422,29 @@ function itemUnitCostDisplay(item){
   if (item.unit === 'g') return { label:'Kg', value: unitCost * 1000 };
   if (item.unit === 'ml') return { label:'L', value: unitCost * 1000 };
   return { label:'un', value: unitCost };
+}
+/* Preço "de referência" pro histórico: R$/kg, R$/L ou R$/un, nunca o
+   preço do pote inteiro. Pote de 500g e pote de 1kg não são
+   comparáveis pelo preço bruto — normalizado, dá pra ver de verdade
+   se o insumo ficou mais caro. `priceOverride` permite calcular o
+   preço-por-unidade de um valor ainda não salvo (ex.: durante a
+   edição do preço do pote). */
+function unitPriceValue(item, priceOverride){
+  var qty = Number(item && item.packageQty) || 0;
+  var price = priceOverride !== undefined ? Number(priceOverride) || 0 : Number(item && item.packagePrice || 0);
+  var unitCost = qty > 0 ? price / qty : 0;
+  if (item && (item.unit === 'g' || item.unit === 'ml')) return unitCost * 1000;
+  return unitCost;
+}
+/* Registros antigos guardavam o preço do POTE inteiro (`perUnit`
+   ausente/false); a partir de agora gravamos o preço normalizado
+   (`perUnit:true`). Pra não estragar o gráfico com uma mistura das
+   duas unidades, converte o registro antigo na leitura usando a
+   quantidade ATUAL do pote — aproximação razoável, já que o tamanho
+   do pote muda bem menos que o preço. */
+function historyEntryUnitPrice(item, entry){
+  if (entry.perUnit) return Number(entry.price) || 0;
+  return unitPriceValue(item, entry.price);
 }
 function ensureRecipe(p){
   if (!p.recipe) p.recipe = { yieldQty:1, unitsPerPackage:1, ingredientUsage:[], packagingUsage:[], batchMinutes:0 };
@@ -653,6 +677,34 @@ function computeMixScenario(){
     need: need,
     unitsMonth: unitsMonth, unitsWeek: unitsWeek, unitsDay: unitsDay,
     revenueMonth: unitsMonth != null ? unitsMonth * blendedPrice : null
+  };
+}
+
+/* Direção oposta do cenário de mix: em vez de "quanto preciso vender
+   pra bater a meta", parte do ritmo de venda já configurado (o mesmo
+   usado em Reposição) e calcula o lucro que ELE gera — pra responder
+   "vendendo no ritmo que eu realmente vendo, eu bato a meta ou não". */
+function computeRateProjection(){
+  var g = state.financialGoals || {};
+  var prods = state.products.filter(function(p){ return !isHidden(p); });
+  var rows = prods.map(function(p){
+    var rate = dailyRateFor(p);
+    var c = recipeCosts(p);
+    return { product:p, rate:rate, costs:c, revenueDay: rate * c.sellPrice, profitDay: rate * c.profit };
+  });
+  var revenueDay = rows.reduce(function(s,r){ return s + r.revenueDay; }, 0);
+  var profitDay = rows.reduce(function(s,r){ return s + r.profitDay; }, 0);
+  var daysPerWeek = Number(g.daysPerWeek) || 0;
+  var activeDaysMonth = daysPerWeek > 0 ? daysPerWeek * WEEKS_PER_MONTH : 30;
+  var revenueMonth = revenueDay * activeDaysMonth;
+  var overhead = monthlyOverhead();
+  var profitMonth = profitDay * activeDaysMonth - overhead;
+  var target = monthlyProfitTarget();
+  return {
+    rows: rows, anyRate: rows.some(function(r){ return r.rate > 0; }),
+    revenueDay:revenueDay, profitDay:profitDay, activeDaysMonth:activeDaysMonth,
+    revenueMonth:revenueMonth, overhead:overhead, profitMonth:profitMonth,
+    target:target, gap: profitMonth - target, hitsGoal: profitMonth >= target
   };
 }
 
@@ -912,18 +964,18 @@ function restockGantt(plan){
     '<p class="hint">Cada barra é um pote durando. O tracinho vertical no fim dela é o dia de comprar de novo. Arraste para o lado para ver os 6 meses.</p>';
 }
 
-function pageFinanceReposicao(){
+/* Ritmo de venda (un/dia por doce) é um único número compartilhado —
+   alimenta a reposição de estoque (aqui embaixo), a projeção de lucro
+   em Metas e a simulação de caixa. Um só card editável em vez de três
+   cópias, senão a pessoa muda num lugar e esquece que os outros dois
+   ficaram desatualizados. */
+function dailyRateCard(){
   var products = state.products.filter(function(p){ return !isHidden(p); });
-  if (!products.length) return '<div class="slot-empty">Cadastre um doce primeiro.</div>';
-  if (!state.ingredients.length && !state.packagingItems.length){
-    return '<div class="slot-empty">Cadastre ingredientes e embalagens para projetar a reposição.</div>';
-  }
-
   var measured = measuredDailyRate();
-  var rateForm = '<div class="admin-card">' +
+  return '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('chart',18,'var(--brand)')+'<h3 style="flex:1">Ritmo de venda</h3>' +
       '<button class="btn-ghost" data-action="resetRate">'+icon('refresh',13)+' Usar as vendas reais</button></div>' +
-    '<p class="hint" style="margin:-10px 0 16px">Quantas unidades de cada doce você vende por dia. Já vem preenchido com a média dos últimos 30 dias — ajuste se quiser simular outro cenário.</p>' +
+    '<p class="hint" style="margin:-10px 0 16px">Quantas unidades de cada doce você vende por dia. Já vem preenchido com a média dos últimos 30 dias — ajuste se quiser simular outro cenário. Esse número também é usado em Reposição e na simulação de caixa.</p>' +
     '<div class="fin-grid-3">' + products.map(function(p){
       var m = measured[p.id] || 0;
       return '<div class="field" style="margin:0"><label for="cr-'+p.id+'">'+esc(p.name)+' (un/dia)</label>' +
@@ -931,7 +983,111 @@ function pageFinanceReposicao(){
         '<p class="hint" style="margin-top:4px">'+(m > 0 ? 'medido: '+num(m,1)+'/dia' : 'sem venda registrada nos últimos 30 dias')+'</p></div>';
     }).join('') + '</div>' +
   '</div>';
+}
+/* =========================================================
+   SIMULAÇÃO DE CAIXA
+   "Vendendo nesse ritmo, dia a dia, quando eu preciso desembolsar pra
+   comprar de novo?" Junta o lucro constante das vendas (ritmo × lucro
+   por unidade) com os picos de gasto do plano de reposição (mesmas
+   compras do Gantt acima) — o resultado é o saldo acumulado, que sobe
+   todo dia com a venda e cai de repente no dia de cada compra.
+========================================================= */
+function computeCashFlowSimulation(plan){
+  var products = state.products.filter(function(p){ return !isHidden(p); });
+  var dailyRevenue = 0, dailyMaterialCost = 0;
+  products.forEach(function(p){
+    var rate = dailyRateFor(p);
+    if (rate <= 0) return;
+    var c = recipeCosts(p);
+    dailyRevenue += rate * c.sellPrice;
+    dailyMaterialCost += rate * c.materialPerPackage;
+  });
+  var dailyProfit = dailyRevenue - dailyMaterialCost;
 
+  var restockByDay = {};
+  plan.rows.forEach(function(r){
+    r.purchases.forEach(function(pu){
+      var day = Math.round(pu.start);
+      restockByDay[day] = (restockByDay[day] || 0) + r.packs * r.packPrice;
+    });
+  });
+
+  var days = [], cash = 0, cashNoRestock = 0, worst = null;
+  for (var t = 0; t < RESTOCK_DAYS; t++){
+    var restock = restockByDay[t] || 0;
+    cash += dailyProfit - restock;
+    cashNoRestock += dailyProfit;
+    var point = { day:t, restock:restock, cash:cash, cashNoRestock:cashNoRestock };
+    days.push(point);
+    if (restock > 0 && (!worst || cash < worst.cash)) worst = point;
+  }
+  return {
+    dailyRevenue:dailyRevenue, dailyMaterialCost:dailyMaterialCost, dailyProfit:dailyProfit,
+    days:days, worst:worst, finalCash: cash, finalCashNoRestock: cashNoRestock,
+    totalRestock: cashNoRestock - cash
+  };
+}
+function cashFlowChart(sim){
+  var days = sim.days;
+  var n = days.length;
+  var cashVals = days.map(function(d){ return d.cash; }).concat(days.map(function(d){ return d.cashNoRestock; })).concat([0]);
+  var minV = Math.min.apply(null, cashVals), maxV = Math.max.apply(null, cashVals);
+  if (minV === maxV){ minV -= 1; maxV += 1; }
+
+  var W = 900, H = 260, padX = 60, padY = 24;
+  function xAt(i){ return padX + (n===1 ? (W-padX*2)/2 : (i/(n-1))*(W-padX*2)); }
+  function yFor(v){ return H - padY - ((v-minV)/(maxV-minV))*(H-padY*2); }
+
+  var grid = '';
+  for (var g = 0; g <= 4; g++){
+    var yy = padY + (g/4)*(H-padY*2);
+    var val = maxV - (g/4)*(maxV-minV);
+    grid += '<line x1="'+padX+'" y1="'+yy.toFixed(1)+'" x2="'+(W-padX)+'" y2="'+yy.toFixed(1)+'" stroke="var(--line)" stroke-width="1"/>' +
+      '<text x="'+(padX-9)+'" y="'+(yy+4).toFixed(1)+'" text-anchor="end" font-size="10.5" fill="var(--ink-3)">'+currency(val).replace('R$','').trim()+'</text>';
+  }
+  /* linha do zero em destaque — abaixo dela o caixa ficou negativo */
+  if (minV < 0 && maxV > 0){
+    var zy = yFor(0);
+    grid += '<line x1="'+padX+'" y1="'+zy.toFixed(1)+'" x2="'+(W-padX)+'" y2="'+zy.toFixed(1)+'" stroke="var(--ink-3)" stroke-width="1" stroke-dasharray="3 3"/>';
+  }
+
+  function pathFor(key){
+    var d = '';
+    days.forEach(function(pt, i){
+      d += (i===0 ? 'M' : 'L') + xAt(i).toFixed(1) + ' ' + yFor(pt[key]).toFixed(1) + ' ';
+    });
+    return d.trim();
+  }
+  var lineGross = '<path class="chart-line" d="'+pathFor('cashNoRestock')+'" fill="none" stroke="var(--ink-3)" stroke-width="2" stroke-dasharray="5 4" stroke-linecap="round" pathLength="1"/>';
+  var lineCash = '<path class="chart-line" d="'+pathFor('cash')+'" fill="none" stroke="var(--brand)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" pathLength="1"/>';
+
+  var dots = days.filter(function(d){ return d.restock > 0; }).map(function(d){
+    return '<circle cx="'+xAt(d.day).toFixed(1)+'" cy="'+yFor(d.cash).toFixed(1)+'" r="3.6" fill="var(--danger)"><title>'+shortDate(dayOffsetToDate(d.day))+' · compra de '+currency(d.restock)+'</title></circle>';
+  }).join('');
+
+  var maxLabels = 8;
+  var step = Math.max(1, Math.ceil(n / maxLabels));
+  var labels = '';
+  for (var i = 0; i < n; i += step){
+    labels += '<text x="'+xAt(i).toFixed(1)+'" y="'+(H-6)+'" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">'+shortDate(dayOffsetToDate(i))+'</text>';
+  }
+
+  return '<div style="overflow-x:auto"><svg viewBox="0 0 '+W+' '+H+'" style="width:100%;min-width:640px;height:auto" role="img" aria-label="Simulação de lucro e caixa dia a dia">' +
+    grid + lineGross + lineCash + dots + labels + '</svg></div>' +
+    '<div class="legend">' +
+      '<span><i style="background:var(--ink-3)"></i> lucro acumulado (sem contar compra de insumo)</span>' +
+      '<span><i style="background:var(--brand)"></i> caixa real (descontando as compras)</span>' +
+      '<span><i style="background:var(--danger)"></i> dia de comprar de novo</span>' +
+    '</div>';
+}
+function pageFinanceReposicao(){
+  var products = state.products.filter(function(p){ return !isHidden(p); });
+  if (!products.length) return '<div class="slot-empty">Cadastre um doce primeiro.</div>';
+  if (!state.ingredients.length && !state.packagingItems.length){
+    return '<div class="slot-empty">Cadastre ingredientes e embalagens para projetar a reposição.</div>';
+  }
+
+  var rateForm = dailyRateCard();
   var plan = computeRestockPlan();
 
   if (!plan.anyRate){
@@ -980,7 +1136,20 @@ function pageFinanceReposicao(){
       : '') +
   '</div>';
 
-  return rateForm + tiles + chart + table;
+  var sim = computeCashFlowSimulation(plan);
+  var simTiles = '<div class="stat-grid">' +
+    statTile('Lucro por dia', currency(sim.dailyProfit), 'sun', sim.dailyProfit>0?'pos':'neg', 'vendendo no ritmo de cima') +
+    statTile('Gasto com reposição em 6m', currency(sim.totalRestock), 'cart', 'neg') +
+    statTile('Saldo em 6 meses', currency(sim.finalCash), 'wallet', sim.finalCash>=0?'pos':'neg', 'lucro das vendas menos as compras') +
+    (sim.worst ? statTile('Caixa mais apertado', currency(sim.worst.cash), 'alert', sim.worst.cash<0?'neg':'', shortDate(dayOffsetToDate(sim.worst.day))) : '') +
+  '</div>';
+  var simChart = '<div class="admin-card">' +
+    '<div class="admin-card-head">'+icon('chart',18,'var(--brand)')+'<h3 style="flex:1">Simulação de lucro e caixa</h3>' +
+      '<span class="pill pill-lilac">próximos 6 meses</span></div>' +
+    '<p class="hint" style="margin-top:-8px">Pra que serve: vendendo no ritmo configurado acima, mostra dia a dia o lucro que vai entrando e onde ele cai de repente porque um insumo acabou e precisou ser recomprado.</p>' +
+    cashFlowChart(sim) + '</div>';
+
+  return rateForm + tiles + chart + table + simTiles + simChart;
 }
 
 /* =========================================================
@@ -2979,7 +3148,28 @@ function pageFinanceMetas(){
     '</div>';
   }).join('');
 
-  return form + overheadCard + mixCard +
+  /* ritmo real de venda → lucro que ele gera (mão inversa do mix acima) */
+  var rp = computeRateProjection();
+  var rateCard = dailyRateCard() +
+    '<div class="admin-card">' +
+      '<div class="admin-card-head">'+icon('sun',18,'var(--brand)')+'<h3 style="flex:1">Vendendo nesse ritmo, eu bato a meta?</h3>' +
+        (rp.anyRate ? '<span class="pill '+(rp.hitsGoal?'pill-ok':'pill-danger')+'">'+(rp.hitsGoal?'bate a meta':'não bate')+'</span>' : '') +
+      '</div>' +
+      '<p class="hint" style="margin:-10px 0 14px">Pra que serve: em vez de calcular quanto você PRECISA vender, usa o "un/dia" que você já preencheu acima e mostra o lucro que ISSO realmente dá.</p>' +
+      (!rp.anyRate
+        ? '<p class="empty-note">Preencha o ritmo de venda de ao menos um doce acima.</p>'
+        : '<div class="stat-grid">' +
+            statTile('Faturamento/dia', currency(rp.revenueDay), 'coin') +
+            statTile('Lucro/dia', currency(rp.profitDay), 'sun', rp.profitDay>0?'pos':'neg') +
+            statTile('Faturamento no mês', currency(rp.revenueMonth), 'chart', '', rp.activeDaysMonth+' dias trabalhados') +
+            statTile('Lucro no mês', currency(rp.profitMonth), 'wallet', rp.hitsGoal?'pos':'neg', 'já descontando custo fixo'+(g.includeTax?' e MEI':'')) +
+          '</div>' +
+          '<p class="hint" style="margin-top:10px">'+(rp.hitsGoal
+            ? 'Sobra <b>'+currency(rp.gap)+'</b> acima da meta de <b>'+currency(rp.target)+'</b>.'
+            : 'Falta <b>'+currency(-rp.gap)+'</b> para a meta de <b>'+currency(rp.target)+'</b> — suba o ritmo de venda ou revise preço/custo.')+'</p>') +
+    '</div>';
+
+  return form + overheadCard + rateCard + mixCard +
     '<p class="field-label" style="margin:26px 0 12px">Cenário por doce</p>' + cards;
 }
 
@@ -3183,12 +3373,12 @@ function eachDayBetween(fromStr, toStr){
   return out;
 }
 function dailyPriceSeries(items){
-  var series = items.map(function(x, i){
+  var series = items.map(function(x){
     var h = (x.item.priceHistory || [])
       .filter(function(p){ return p && p.date; })
-      .slice()
+      .map(function(p){ return { date:p.date, price: historyEntryUnitPrice(x.item, p), store:p.store }; })
       .sort(function(a,b){ return a.date < b.date ? -1 : 1; });
-    return { name:x.name, color:x.color, hist:h, current:Number(x.item.packagePrice)||0 };
+    return { name:x.name, color:x.color, hist:h, current:unitPriceValue(x.item) };
   }).filter(function(s){ return s.hist.length > 0; });
   if (!series.length) return { days:[], series:[] };
 
@@ -3241,8 +3431,11 @@ function priceHistoryMultiChart(items){
       if (!p) return;
       d += (started ? 'L' : 'M') + xAt(i).toFixed(1) + ' ' + yFor(p.price).toFixed(1) + ' ';
       started = true;
-      /* bolinha só nos dias em que o preço realmente mudou */
-      if (p.change) dots += '<circle cx="'+xAt(i).toFixed(1)+'" cy="'+yFor(p.price).toFixed(1)+'" r="3.4" fill="'+s.color+'"><title>'+esc(s.name)+' · '+esc(dateLabel(strToDate(p.date)))+' · '+currency(p.price)+'</title></circle>';
+      /* uma bolinha por dia — maior e opaca no dia em que o preço
+         realmente mudou, pequena e semi-transparente nos outros, pra
+         não sumir o destaque de quando o preço de fato mexeu */
+      var r = p.change ? 3.4 : 1.6;
+      dots += '<circle cx="'+xAt(i).toFixed(1)+'" cy="'+yFor(p.price).toFixed(1)+'" r="'+r+'" fill="'+s.color+'"'+(p.change?'':' opacity="0.5"')+'><title>'+esc(s.name)+' · '+esc(dateLabel(strToDate(p.date)))+' · '+currency(p.price)+'</title></circle>';
     });
     if (!started) return '';
     return '<path class="chart-line" d="'+d.trim()+'" fill="none" stroke="'+s.color+'" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" pathLength="1"/>' + dots;
@@ -3275,16 +3468,32 @@ function priceHistoryMultiChart(items){
     grid + paths + labels + '</svg></div>' + legend +
     '<p class="hint">'+range+'. Dias sem alteração repetem o último preço — por isso a linha continua reta em vez de sumir.</p>';
 }
-function itemHistoryRowsHtml(item, color){
+function itemHistoryRowsHtml(item, color, kind){
   var h = (item.priceHistory || []).slice().sort(function(a,b){ return a.date < b.date ? 1 : -1; });
   if (!h.length) return '<p class="empty-note">Sem alterações registradas.</p>';
   var dot = color ? '<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+color+';margin-right:8px;vertical-align:middle"></i>' : '';
-  return '<div class="tbl-wrap"><table class="tbl" style="min-width:0"><thead><tr><th>Data</th><th>Loja</th><th class="n">Preço</th><th class="n">Variação</th></tr></thead><tbody>' +
+  var disp = itemUnitCostDisplay(item);
+  var editing = state.editingHistoryEntry;
+  return '<div class="tbl-wrap"><table class="tbl" style="min-width:0"><thead><tr><th>Data</th><th>Loja</th><th class="n">Preço/'+disp.label+'</th><th class="n">Variação</th><th></th></tr></thead><tbody>' +
     h.map(function(p, i){
+      var price = historyEntryUnitPrice(item, p);
       var prev = h[i+1];
-      var diff = prev ? Number(p.price) - Number(prev.price) : 0;
-      return '<tr><td class="k">'+dot+esc(dateLabel(strToDate(p.date)))+'</td><td>'+esc(p.store||'—')+'</td><td class="n">'+currency(p.price)+'</td>' +
-        '<td class="n" style="color:'+(diff>0?'var(--danger)':(diff<0?'var(--ok)':'var(--ink-3)'))+'">'+(prev?((diff>0?'+':'')+currency(diff)):'—')+'</td></tr>';
+      var diff = prev ? price - historyEntryUnitPrice(item, prev) : 0;
+      var isEditing = editing && editing.kind === kind && editing.id === item.id && editing.date === p.date;
+      if (isEditing){
+        return '<tr>' +
+          '<td class="k">'+dot+esc(dateLabel(strToDate(p.date)))+'</td>' +
+          '<td><input class="input xs" id="he-store" value="'+esc(p.store||'')+'" aria-label="Loja"></td>' +
+          '<td class="n"><input class="input xs" id="he-price" type="number" inputmode="decimal" step="0.01" value="'+price+'" style="width:90px;text-align:right" aria-label="Preço por '+disp.label+'"></td>' +
+          '<td class="n"></td>' +
+          '<td class="n" style="white-space:nowrap">' +
+            '<button class="btn-primary sm" style="padding:5px 10px;min-height:0" data-action="saveHistoryEntry" data-kind="'+kind+'" data-id="'+item.id+'" data-date="'+p.date+'">Salvar</button> ' +
+            '<button class="btn-ghost sm" style="padding:5px 10px;min-height:0" data-action="cancelEditHistoryEntry">Cancelar</button>' +
+          '</td></tr>';
+      }
+      return '<tr><td class="k">'+dot+esc(dateLabel(strToDate(p.date)))+'</td><td>'+esc(p.store||'—')+'</td><td class="n">'+currency(price)+'</td>' +
+        '<td class="n" style="color:'+(diff>0?'var(--danger)':(diff<0?'var(--ok)':'var(--ink-3)'))+'">'+(prev?((diff>0?'+':'')+currency(diff)):'—')+'</td>' +
+        '<td class="n"><button class="btn-ghost sm" style="padding:5px 8px;min-height:0" data-action="startEditHistoryEntry" data-kind="'+kind+'" data-id="'+item.id+'" data-date="'+p.date+'" aria-label="Editar">'+icon('edit',13)+'</button></td></tr>';
     }).join('') + '</tbody></table></div>';
 }
 function pageFinanceHistorico(){
@@ -3311,7 +3520,7 @@ function pageFinanceHistorico(){
   var tables = chosen.map(function(x){
     return '<div class="admin-card"><div class="admin-card-head">'+icon(x.kind==='ingredient'?'package':'truck',17,'var(--brand)')+
       '<h3 style="flex:1">'+esc(x.name)+'</h3><span class="pill pill-lilac">'+currency(x.item.packagePrice||0)+'</span></div>' +
-      itemHistoryRowsHtml(x.item, x.color) + '</div>';
+      itemHistoryRowsHtml(x.item, x.color, x.kind) + '</div>';
   }).join('');
 
   return picker + chart + tables;
@@ -3884,9 +4093,10 @@ document.addEventListener('click', function(e){
     if (!iname) { toast('Informe o nome do ingrediente.', 'err'); return; }
     var iprice = Number(document.getElementById('ni-preco').value) || 0;
     var istore = (document.getElementById('ni-loja').value||'').trim();
+    var iqty = Number(document.getElementById('ni-qtd').value) || 1;
     var newIng = { id:'ing'+Date.now(), name:iname, unit:document.getElementById('ni-unidade').value, store:istore,
-      packagePrice:iprice, packageQty:Number(document.getElementById('ni-qtd').value) || 1,
-      priceHistory:[{ date:todayStr(), price:iprice, store:istore }] };
+      packagePrice:iprice, packageQty:iqty,
+      priceHistory:[{ date:todayStr(), price:unitPriceValue({unit:document.getElementById('ni-unidade').value, packageQty:iqty}, iprice), store:istore, perUnit:true }] };
     state.ingredients.push(newIng);
     dbSet('ingredients/'+newIng.id, newIng);
     state.addingIngredient = false; render(); toast('Ingrediente criado.', 'ok');
@@ -3901,9 +4111,10 @@ document.addEventListener('click', function(e){
     if (!pkname) { toast('Informe o nome da embalagem.', 'err'); return; }
     var pkprice = Number(document.getElementById('np2-preco').value) || 0;
     var pkstore = (document.getElementById('np2-loja').value||'').trim();
+    var pkqty = Number(document.getElementById('np2-qtd').value) || 1;
     var newPack = { id:'pack'+Date.now(), name:pkname, unit:document.getElementById('np2-unidade').value, store:pkstore,
-      packagePrice:pkprice, packageQty:Number(document.getElementById('np2-qtd').value) || 1,
-      priceHistory:[{ date:todayStr(), price:pkprice, store:pkstore }] };
+      packagePrice:pkprice, packageQty:pkqty,
+      priceHistory:[{ date:todayStr(), price:unitPriceValue({unit:document.getElementById('np2-unidade').value, packageQty:pkqty}, pkprice), store:pkstore, perUnit:true }] };
     state.packagingItems.push(newPack);
     dbSet('packagingItems/'+newPack.id, newPack);
     state.addingPackaging = false; render(); toast('Embalagem criada.', 'ok');
@@ -3994,9 +4205,10 @@ document.addEventListener('click', function(e){
       if (pcItem) {
         pcItem.packagePrice = pcm.newPrice;
         if (!pcItem.priceHistory) pcItem.priceHistory = [];
+        var pcUnitPrice = unitPriceValue(pcItem, pcm.newPrice);
         var pcLast = pcItem.priceHistory[pcItem.priceHistory.length - 1];
-        if (pcLast && pcLast.date === todayStr()) { pcLast.price = pcm.newPrice; pcLast.store = pcItem.store || ''; }
-        else pcItem.priceHistory.push({ date: todayStr(), price: pcm.newPrice, store: pcItem.store || '' });
+        if (pcLast && pcLast.date === todayStr()) { pcLast.price = pcUnitPrice; pcLast.store = pcItem.store || ''; pcLast.perUnit = true; }
+        else pcItem.priceHistory.push({ date: todayStr(), price: pcUnitPrice, store: pcItem.store || '', perUnit:true });
         dbSet((pcm.kind === 'ingredient' ? 'ingredients' : 'packagingItems') + '/' + pcItem.id, pcItem);
         toast('Preço atualizado.', 'ok');
       }
@@ -4012,6 +4224,36 @@ document.addEventListener('click', function(e){
     var hIdx = hCur.indexOf(hKey);
     if (hIdx === -1) hCur.push(hKey); else hCur.splice(hIdx, 1);
     state.historySelectedKeys = hCur;
+    render();
+  }
+  else if (action === 'startEditHistoryEntry') {
+    state.editingHistoryEntry = { kind:el.dataset.kind, id:el.dataset.id, date:el.dataset.date };
+    render();
+  }
+  else if (action === 'cancelEditHistoryEntry') { state.editingHistoryEntry = null; render(); }
+  else if (action === 'saveHistoryEntry') {
+    var heKind = el.dataset.kind, heId = el.dataset.id, heDate = el.dataset.date;
+    var heItem = heKind === 'ingredient' ? getIngredient(heId) : getPackagingItem(heId);
+    if (heItem){
+      var heEntry = (heItem.priceHistory||[]).find(function(x){ return x.date === heDate; });
+      if (heEntry){
+        heEntry.price = Number(document.getElementById('he-price').value) || 0;
+        heEntry.store = (document.getElementById('he-store').value||'').trim();
+        heEntry.perUnit = true;
+        /* se for o registro mais recente, o preço "oficial" do pote
+           também precisa refletir a correção — senão o histórico e o
+           preço do pote mostram dois números diferentes pro mesmo dia */
+        var heSorted = heItem.priceHistory.slice().sort(function(a,b){ return a.date < b.date ? 1 : -1; });
+        if (heSorted[0] === heEntry){
+          var heQty = Number(heItem.packageQty) || 0;
+          var heDivisor = (heItem.unit === 'g' || heItem.unit === 'ml') ? heQty / 1000 : heQty;
+          heItem.packagePrice = heDivisor > 0 ? heEntry.price * heDivisor : heItem.packagePrice;
+        }
+        dbSet((heKind === 'ingredient' ? 'ingredients' : 'packagingItems') + '/' + heItem.id, heItem);
+        toast('Histórico atualizado.', 'ok');
+      }
+    }
+    state.editingHistoryEntry = null;
     render();
   }
 });
