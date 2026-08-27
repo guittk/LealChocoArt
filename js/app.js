@@ -3351,14 +3351,7 @@ function pageFinanceMetas(){
           '</select></div>' +
           '<div class="field"><label for="ms-qtd">Quantos por dia</label><input class="input" id="ms-qtd" type="number" inputmode="decimal" min="0" step="0.5" value="'+sp.qty+'" data-action="setMetasSingleQty"></div>' +
           '<div class="field"><label for="g-dias">Dias trabalhados por semana</label><input class="input" id="g-dias" type="number" inputmode="numeric" min="1" max="7" step="1" value="'+(g.daysPerWeek||0)+'" data-action="setGoalDays"></div>' +
-        '</div>' +
-        '<div class="stat-grid" style="margin-top:16px">' +
-          statTile('Faturamento/dia', currency(sp.revenueDay), 'coin') +
-          statTile('Lucro/dia', currency(sp.profitDay), 'sun', sp.profitDay>0?'pos':'neg') +
-          statTile('Faturamento no mês', currency(sp.revenueMonth), 'chart', '', sp.activeDaysMonth.toFixed(1)+' dias trabalhados') +
-          statTile('Lucro no mês', currency(sp.profitMonth), 'wallet', sp.profitMonth>0?'pos':'neg') +
-        '</div>' +
-        '<p class="hint" style="margin-top:10px">Já inclui ingredientes, embalagem e mão de obra de cada <b>'+esc(sp.product.name)+'</b>. Não desconta o custo fixo do mês, porque esse custo é do negócio inteiro, não de um doce isolado.</p>')
+        '</div>')
       : '<div class="fin-grid-2">' +
         (g.goalMode === 'faturamento'
           ? '<div class="field"><label for="g-fat">Faturamento desejado no mês (R$)</label><input class="input" id="g-fat" type="number" inputmode="decimal" step="50" value="'+(g.monthlyGoal||0)+'" data-action="setGoalMonthly"></div>'
@@ -3381,11 +3374,23 @@ function pageFinanceMetas(){
     toggleChip('Considerar a taxa MEI no que preciso cobrir', !!g.includeTax, 'toggleGoalTax') +
   '</div>';
 
-  var overheadCard = isRitmoMode ? '' : '<div class="stat-grid">' +
-    statTile('Custo fixo do mês', currency(monthlyOverhead()), 'wallet', '', 'custo fixo'+(g.includeTax?' + MEI':'')+' — os insumos saem de cada venda') +
-    statTile('Meta de lucro', currency(monthlyProfitTarget()), 'coin', 'brand') +
-    statTile('Lucro total necessário', currency(monthlyOverhead()+monthlyProfitTarget()), 'chart', 'pos', 'é isso que as vendas precisam gerar') +
-  '</div>';
+  /* Resultado vem DEPOIS dos blocos de entrada de dado, nunca dentro
+     deles — mesmo padrão dos outros dois modos (meta → overheadForm →
+     resultado), pra não parecer que cada modo tem seu próprio jeito
+     de se organizar na tela. */
+  var overheadCard = isRitmoMode
+    ? (!sp ? '' : '<div class="stat-grid">' +
+        statTile('Faturamento/dia', currency(sp.revenueDay), 'coin') +
+        statTile('Lucro/dia', currency(sp.profitDay), 'sun', sp.profitDay>0?'pos':'neg') +
+        statTile('Faturamento no mês', currency(sp.revenueMonth), 'chart', '', sp.activeDaysMonth.toFixed(1)+' dias trabalhados') +
+        statTile('Lucro no mês', currency(sp.profitMonth), 'wallet', sp.profitMonth>0?'pos':'neg') +
+      '</div>' +
+      '<p class="hint" style="margin:10px 0 0">Já inclui ingredientes, embalagem e mão de obra de cada <b>'+esc(sp.product.name)+'</b>. Não desconta o custo fixo do mês, porque esse custo é do negócio inteiro, não de um doce isolado.</p>')
+    : '<div class="stat-grid">' +
+      statTile('Custo fixo do mês', currency(monthlyOverhead()), 'wallet', '', 'custo fixo'+(g.includeTax?' + MEI':'')+' — os insumos saem de cada venda') +
+      statTile('Meta de lucro', currency(monthlyProfitTarget()), 'coin', 'brand') +
+      statTile('Lucro total necessário', currency(monthlyOverhead()+monthlyProfitTarget()), 'chart', 'pos', 'é isso que as vendas precisam gerar') +
+    '</div>';
 
   /* cenário de mix */
   var mix = computeMixScenario();
