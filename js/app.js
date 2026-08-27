@@ -693,34 +693,6 @@ function computeMixScenario(){
   };
 }
 
-/* Direção oposta do cenário de mix: em vez de "quanto preciso vender
-   pra bater a meta", parte do ritmo de venda já configurado (o mesmo
-   usado em Reposição) e calcula o faturamento e lucro que ELE gera de
-   verdade — bater ou não a meta é só uma leitura a mais em cima
-   desse número, não o motivo de existir. */
-function computeRateProjection(){
-  var g = state.financialGoals || {};
-  var prods = state.products.filter(function(p){ return !isHidden(p); });
-  var rows = prods.map(function(p){
-    var rate = dailyRateFor(p);
-    var c = recipeCosts(p);
-    return { product:p, rate:rate, costs:c, revenueDay: rate * c.sellPrice, profitDay: rate * c.profit };
-  });
-  var revenueDay = rows.reduce(function(s,r){ return s + r.revenueDay; }, 0);
-  var profitDay = rows.reduce(function(s,r){ return s + r.profitDay; }, 0);
-  var daysPerWeek = Number(g.daysPerWeek) || 0;
-  var activeDaysMonth = daysPerWeek > 0 ? daysPerWeek * WEEKS_PER_MONTH : 30;
-  var revenueMonth = revenueDay * activeDaysMonth;
-  var overhead = monthlyOverhead();
-  var profitMonth = profitDay * activeDaysMonth - overhead;
-  var target = monthlyProfitTarget();
-  return {
-    rows: rows, anyRate: rows.some(function(r){ return r.rate > 0; }),
-    revenueDay:revenueDay, profitDay:profitDay, activeDaysMonth:activeDaysMonth,
-    revenueMonth:revenueMonth, overhead:overhead, profitMonth:profitMonth,
-    target:target, gap: profitMonth - target, hitsGoal: profitMonth >= target
-  };
-}
 /* Calculadora avulsa: só "vendendo X de UM doce por dia, quanto entra
    e quanto sobra" — sem mexer no ritmo configurado (que é usado em
    Reposição e na simulação de caixa) e sem descontar custo fixo, que
@@ -816,7 +788,8 @@ function computeShoppingList(){
    Precisa de um ritmo de venda (unidades/dia) — vem das vendas
    reais dos últimos 30 dias, e a Julia pode ajustar na mão.
 ========================================================= */
-var RESTOCK_DAYS = 183;   /* ~6 meses */
+var RESTOCK_DAYS = 91;   /* ~3 meses */
+var CASHFLOW_DAYS = 30;  /* horizonte da simulação de caixa: 1 mês */
 
 /* unidades vendidas por dia, por produto, medidas no histórico real */
 function measuredDailyRate(){
@@ -939,7 +912,7 @@ function restockGantt(plan){
   /* faixa de meses no topo */
   var months = '', d = new Date(); d.setHours(0,0,0,0);
   var cursor = new Date(d.getFullYear(), d.getMonth(), 1);
-  for (var m = 0; m < 8; m++){
+  for (var m = 0; m < 4; m++){
     var mStart = new Date(cursor.getFullYear(), cursor.getMonth() + m, 1);
     var mEnd = new Date(cursor.getFullYear(), cursor.getMonth() + m + 1, 1);
     var from = Math.max(0, Math.round((mStart - d) / 86400000));
@@ -951,7 +924,7 @@ function restockGantt(plan){
 
   /* linhas verticais de início de mês */
   var grid = '';
-  for (var gm = 0; gm < 8; gm++){
+  for (var gm = 0; gm < 4; gm++){
     var gs = new Date(d.getFullYear(), d.getMonth() + gm, 1);
     var off = Math.round((gs - d) / 86400000);
     if (off <= 0 || off >= RESTOCK_DAYS) continue;
@@ -997,7 +970,7 @@ function restockGantt(plan){
         rows +
       '</div>' +
     '</div>' +
-    '<p class="hint">Cada barra é um pote durando. O tracinho vertical no fim dela é o dia de comprar de novo. Arraste para o lado para ver os 6 meses.</p>';
+    '<p class="hint">Cada barra é um pote durando. O tracinho vertical no fim dela é o dia de comprar de novo. Arraste para o lado para ver os 3 meses.</p>';
 }
 
 /* Ritmo de venda (un/dia por doce) é um único número compartilhado —
@@ -1049,7 +1022,7 @@ function computeCashFlowSimulation(plan){
   });
 
   var days = [], cash = 0, cashNoRestock = 0, worst = null;
-  for (var t = 0; t < RESTOCK_DAYS; t++){
+  for (var t = 0; t < CASHFLOW_DAYS; t++){
     var restock = restockByDay[t] || 0;
     cash += dailyProfit - restock;
     cashNoRestock += dailyProfit;
@@ -1137,7 +1110,7 @@ function pageFinanceReposicao(){
 
   var tiles = '<div class="stat-grid">' +
     statTile('Compra de hoje', currency(plan.firstBuyCost), 'cart', 'brand', plan.rows.length+' itens (ingrediente + embalagem)') +
-    statTile('Gasto em 6 meses', currency(plan.totalCost), 'wallet', '', plan.rows.reduce(function(s,r){ return s + r.buysInHorizon; }, 0)+' compras no total') +
+    statTile('Gasto em 3 meses', currency(plan.totalCost), 'wallet', '', plan.rows.reduce(function(s,r){ return s + r.buysInHorizon; }, 0)+' compras no total') +
     statTile('Acaba primeiro', esc(plan.rows[0].item.name), 'alert', 'neg', (plan.rows[0].kind==='packaging'?'embalagem · ':'ingrediente · ')+'em '+Math.round(plan.rows[0].cycleDays)+' dias · '+shortDate(dayOffsetToDate(plan.rows[0].cycleDays))) +
     statTile('Dura mais', esc(plan.rows[plan.rows.length-1].item.name), 'check', 'pos', (plan.rows[plan.rows.length-1].kind==='packaging'?'embalagem · ':'ingrediente · ')+Math.round(plan.rows[plan.rows.length-1].cycleDays)+' dias') +
   '</div>';
@@ -1156,14 +1129,14 @@ function pageFinanceReposicao(){
 
   var chart = '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('calendar',18,'var(--brand)')+'<h3 style="flex:1">Quando cada insumo acaba</h3>' +
-      '<span class="pill pill-lilac">próximos 6 meses</span></div>' +
+      '<span class="pill pill-lilac">próximos 3 meses</span></div>' +
     '<p class="hint" style="margin-top:-8px">Pra que serve: saber com antecedência quando comprar de novo, sem depender de reparar que o pote esvaziou. Conta ingredientes ('+icon('package',11)+') e embalagens ('+icon('truck',11)+') juntos.</p>' +
     restockGantt(plan) + '</div>';
 
   var table = '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('list',18,'var(--brand)')+'<h3 style="flex:1">Detalhe por insumo</h3></div>' +
     '<div class="tbl-wrap"><table class="tbl">' +
-    '<thead><tr><th>Insumo</th><th class="n">Consumo/dia</th><th class="n">Potes por compra</th><th class="n">Dura</th><th class="n">Próxima compra</th><th class="n">Compras em 6m</th><th class="n">Gasto em 6m</th></tr></thead><tbody>' +
+    '<thead><tr><th>Insumo</th><th class="n">Consumo/dia</th><th class="n">Potes por compra</th><th class="n">Dura</th><th class="n">Próxima compra</th><th class="n">Compras em 3m</th><th class="n">Gasto em 3m</th></tr></thead><tbody>' +
     plan.rows.map(function(r){
       return '<tr>' +
         '<td class="k">'+icon(r.kind==='packaging'?'truck':'package', 13, 'var(--ink-3)')+' '+esc(r.item.name)+'</td>' +
@@ -1187,13 +1160,13 @@ function pageFinanceReposicao(){
   var sim = computeCashFlowSimulation(plan);
   var simTiles = '<div class="stat-grid">' +
     statTile('Lucro por dia', currency(sim.dailyProfit), 'sun', sim.dailyProfit>0?'pos':'neg', 'vendendo no ritmo de cima') +
-    statTile('Gasto com reposição em 6m', currency(sim.totalRestock), 'cart', 'neg') +
-    statTile('Saldo em 6 meses', currency(sim.finalCash), 'wallet', sim.finalCash>=0?'pos':'neg', 'lucro das vendas menos as compras') +
+    statTile('Gasto com reposição no mês', currency(sim.totalRestock), 'cart', 'neg') +
+    statTile('Saldo em 30 dias', currency(sim.finalCash), 'wallet', sim.finalCash>=0?'pos':'neg', 'lucro das vendas menos as compras') +
     (sim.worst ? statTile('Caixa mais apertado', currency(sim.worst.cash), 'alert', sim.worst.cash<0?'neg':'', shortDate(dayOffsetToDate(sim.worst.day))) : '') +
   '</div>';
   var simChart = '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('chart',18,'var(--brand)')+'<h3 style="flex:1">Simulação de lucro e caixa</h3>' +
-      '<span class="pill pill-lilac">próximos 6 meses</span></div>' +
+      '<span class="pill pill-lilac">próximos 30 dias</span></div>' +
     '<p class="hint" style="margin-top:-8px">Pra que serve: vendendo no ritmo configurado acima, mostra dia a dia o lucro que vai entrando e onde ele cai de repente porque um insumo acabou e precisou ser recomprado.</p>' +
     cashFlowChart(sim) + '</div>';
 
@@ -3218,28 +3191,10 @@ function pageFinanceMetas(){
     '</div>';
   }).join('');
 
-  /* ritmo real de venda (o mesmo configurado em Reposição) → quanto
-     de faturamento e lucro ele já está trazendo de fato, pra todos os
-     doces juntos. Mão inversa do mix: aqui não se escolhe uma meta, só
-     se lê o resultado do ritmo real. */
-  var rp = computeRateProjection();
-  var rateCard = '<div class="admin-card">' +
-      '<div class="admin-card-head">'+icon('chart',18,'var(--brand)')+'<h3 style="flex:1">Vendendo no ritmo configurado</h3></div>' +
-      '<p class="hint" style="margin:-10px 0 14px">Pra que serve: ver o faturamento e lucro reais do ritmo de venda já preenchido no card abaixo (o mesmo usado em Reposição) — sem escolher meta nenhuma.</p>' +
-      (!rp.anyRate
-        ? '<p class="empty-note">Preencha o ritmo de venda no card abaixo.</p>'
-        : '<div class="stat-grid">' +
-            statTile('Faturamento/dia', currency(rp.revenueDay), 'coin') +
-            statTile('Lucro/dia', currency(rp.profitDay), 'sun', rp.profitDay>0?'pos':'neg') +
-            statTile('Faturamento no mês', currency(rp.revenueMonth), 'chart', '', rp.activeDaysMonth.toFixed(1)+' dias trabalhados') +
-            statTile('Lucro no mês', currency(rp.profitMonth), 'wallet', rp.profitMonth>0?'pos':'neg', 'já descontando custo fixo'+(g.includeTax?' e MEI':'')) +
-          '</div>') +
-    '</div>' + dailyRateCard();
-
   var cenarioPorDoce = isRitmoMode ? '' :
     '<p class="field-label" style="margin:26px 0 12px">Cenário por doce</p>' + cards;
 
-  return form + overheadCard + rateCard + mixCard + cenarioPorDoce;
+  return form + overheadCard + mixCard + cenarioPorDoce;
 }
 
 /* ---------- compras: comprar tudo do zero ---------- */
