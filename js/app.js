@@ -60,6 +60,7 @@ function icon(name, size, color){
     chevronRight:'<polyline points="9 18 15 12 9 6"/>',
     chevronDown:'<polyline points="6 9 12 15 18 9"/>',
     arrowRight:'<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
+    arrowLeft:'<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>',
     check:'<polyline points="20 6 9 17 4 12"/>',
     plus:'<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
     minus:'<line x1="5" y1="12" x2="19" y2="12"/>',
@@ -214,6 +215,10 @@ var state = {
   historySelectedKeys: null,
   editingHistoryEntry: null,   /* { kind, id, date } — linha do histórico de preço em edição */
   orderFilter: { q:'', status:'todos', when:'todos', paid:'todos' },
+  trackCode: '',              /* código digitado/da URL na página pública de acompanhamento */
+  trackLoading: false,
+  trackResult: null,          /* doc de lealchocoart_orderTracking já buscado */
+  trackError: '',
   analyticsPeriod: '30',
   analyticsOnlyDone: false,
   planQty: {},                  /* planejamento de produção: { produtoId: qtd } */
@@ -1191,6 +1196,49 @@ function dbPushOrder(order){
   if (!FIREBASE_READY) return Promise.reject(new Error('offline'));
   return coll('orders').doc(order.id).set(order);
 }
+/* `orders` exige login pra ler (guarda telefone, endereço de retirada
+   combinado etc.) — o cliente não está autenticado, então pra ele
+   acompanhar o próprio pedido pelo código existe uma cópia PÚBLICA e
+   REDUZIDA, sem telefone, num documento à parte cuja chave é o
+   próprio código (curto, não sequencial — não dá pra listar a
+   coleção inteira, só buscar um código que você já tem em mãos). */
+function orderTrackingSubset(order){
+  return {
+    code: order.code, nome: order.nome, status: order.status || 'pendente',
+    items: (order.items||[]).map(function(i){ return { name:i.name, qty:i.qty }; }),
+    total: order.total, local: order.local || '', mode: order.mode,
+    pickupDate: order.pickupDate || null, pickupStart: order.pickupStart || null, pickupEnd: order.pickupEnd || null,
+    desiredDate: order.desiredDate || null, horario: order.horario || null,
+    produced: !!order.produced,
+    updatedAt: new Date().toISOString()
+  };
+}
+function pushOrderTracking(order){
+  if (!FIREBASE_READY || !order.code) return;
+  dbSet('orderTracking/'+order.code, orderTrackingSubset(order));
+}
+/* Busca avulsa (não é um listener ao vivo) — a pessoa abre o link,
+   vê o status daquele instante, e recarrega se quiser atualizar.
+   Simples de propósito: essa página não tem sessão, não tem auth,
+   só um código que veio do WhatsApp. */
+function lookupOrderTracking(code){
+  var clean = String(code||'').trim().toUpperCase();
+  state.trackCode = clean; state.trackResult = null; state.trackError = '';
+  if (!clean){ render(); return; }
+  if (!FIREBASE_READY){ state.trackError = 'Sem conexão com o servidor agora.'; render(); return; }
+  state.trackLoading = true; render();
+  coll('orderTracking').doc(clean).get().then(function(snap){
+    state.trackLoading = false;
+    if (snap.exists) state.trackResult = snap.data();
+    else state.trackError = 'Não encontrei nenhum pedido com esse código. Confira se digitou certo.';
+    render();
+  }).catch(function(e){
+    console.error(e);
+    state.trackLoading = false;
+    state.trackError = 'Não consegui buscar agora. Tente de novo em instantes.';
+    render();
+  });
+}
 
 /* ---------- baixa de estoque ----------
    O cliente que faz o pedido não está autenticado, e as regras do
@@ -1500,6 +1548,7 @@ function renderFooter(){
       '<div class="footer-icons">' +
         '<a href="'+SHOP.instagram+'" target="_blank" rel="noopener" aria-label="Instagram da Leal ChocoArt">'+icon('instagram',19)+'</a>' +
         '<a href="https://wa.me/'+SHOP.whatsapp+'" target="_blank" rel="noopener" aria-label="WhatsApp da Leal ChocoArt">'+icon('whatsapp',19)+'</a>' +
+        '<button data-action="go" data-page="track" class="btn-ghost" aria-label="Acompanhar meu pedido">'+icon('clipboard',14)+' Meu pedido</button>' +
         '<button data-action="go" data-page="admin" class="btn-ghost" aria-label="Área administrativa">'+icon('lock',14)+' Admin</button>' +
       '</div></div>' +
     '</footer>';
@@ -2091,8 +2140,55 @@ function renderConfirm(){
     '<a class="btn-primary" style="width:100%" href="'+esc(orderWaLink(o))+'" target="_blank" rel="noopener" data-action="confirmWhats">' +
       icon('whatsapp',17)+' Enviar no WhatsApp</a>' +
     '<button class="btn-ghost" data-action="closeConfirm" style="width:100%;justify-content:center;margin-top:8px">Depois eu mando</button>' +
-    '<p class="hint" style="text-align:center;margin-top:12px">Guarde o código <b>'+esc(o.code)+'</b> — é ele que identifica seu pedido.</p>' +
+    '<p class="hint" style="text-align:center;margin-top:12px">Guarde o código <b>'+esc(o.code)+'</b> — é ele que identifica seu pedido. ' +
+      '<a href="#pedido/'+esc(o.code)+'" data-action="goTrack" data-code="'+esc(o.code)+'">Acompanhar pedido</a></p>' +
     '</div></div>';
+}
+
+/* ---------- acompanhar pedido (página pública, sem login) ---------- */
+function pageTrackOrder(){
+  var r = state.trackResult;
+  var form = '<form class="track-search" data-action="trackForm">' +
+    '<div class="field"><label for="track-code">Código do pedido</label>' +
+      '<input class="input" id="track-code" name="code" placeholder="Ex: LC4X2P1" value="'+esc(state.trackCode)+'" autocapitalize="characters"></div>' +
+    '<button class="btn-primary" type="submit">'+icon('search',15)+' Buscar</button>' +
+  '</form>' +
+  '<p class="hint">O código veio na confirmação do pedido, no WhatsApp ou na tela depois de encomendar.</p>';
+
+  var body = '';
+  if (state.trackLoading){
+    body = '<p class="hint" style="margin-top:20px">Buscando…</p>';
+  } else if (state.trackError){
+    body = '<div class="banner banner-warn" style="margin-top:20px">'+icon('alert',16)+'<span>'+esc(state.trackError)+'</span></div>';
+  } else if (r){
+    var when = r.mode === 'combinar'
+      ? ('A combinar' + (r.desiredDate ? ' · pedido para ' + dateLong(strToDate(r.desiredDate)) : ''))
+      : (r.pickupDate ? dateLong(strToDate(r.pickupDate)) + ' · ' + r.pickupStart + ' às ' + r.pickupEnd : 'A combinar');
+    body = '<div class="track-card">' +
+      '<div class="track-card-head">' +
+        '<span>'+icon('clipboard',20,'var(--brand)')+' Pedido <b>'+esc(r.code)+'</b></span>' +
+        '<span class="pill pill-'+statusTone(r.status||'pendente')+'">'+statusLabel(r.status||'pendente')+'</span>' +
+      '</div>' +
+      (r.nome ? '<p class="hint" style="margin-top:-4px">'+esc(r.nome)+'</p>' : '') +
+      '<div class="cart-box" style="margin:16px 0">' +
+        (r.items||[]).map(function(i){ return '<div class="cart-line"><span>'+i.qty+'× '+esc(i.name)+'</span></div>'; }).join('') +
+        '<div class="cart-line"><span>Retirada</span><b style="text-align:right;max-width:60%">'+esc(r.local||'A combinar')+'</b></div>' +
+        '<div class="cart-line"><span>Quando</span><b style="text-align:right;max-width:60%">'+esc(when)+'</b></div>' +
+        '<div class="cart-total"><span>Total</span><span>'+currency(r.total)+'</span></div>' +
+      '</div>' +
+      (r.status === 'cancelado'
+        ? '<div class="banner banner-danger">'+icon('alert',16)+'<span>Esse pedido foi cancelado. Fale com a Julia se não esperava isso.</span></div>'
+        : r.produced
+          ? '<div class="banner banner-info">'+icon('check',16)+'<span>Já está pronto! Nos vemos na retirada.</span></div>'
+          : '<div class="banner banner-info">'+icon('info',16)+'<span>Ainda em preparo — a Julia atualiza aqui conforme o andamento.</span></div>') +
+    '</div>';
+  }
+
+  return '<div class="track-wrap">' +
+    '<a href="#" data-action="go" data-page="site" class="btn-ghost" style="margin-bottom:20px">'+icon('arrowLeft',14)+' Voltar pro site</a>' +
+    '<h1 class="track-title">Acompanhar pedido</h1>' +
+    form + body +
+  '</div>';
 }
 
 /* ---------- diálogo de confirmação genérico ---------- */
@@ -3828,8 +3924,8 @@ function morphInto(container, html){
 
 /* ---------- render principal ---------- */
 function render(){
-  var content = state.page === 'admin'
-    ? pageAdmin()
+  var content = state.page === 'admin' ? pageAdmin()
+    : state.page === 'track' ? pageTrackOrder()
     : sectionHero() + sectionProdutos() + sectionLocalizacao() + sectionQuemFaz() + sectionContato();
   var html = renderHeader() + '<main>' + content + '</main>' + renderFooter() + CartBar() +
     renderModal() + (state.confirmOpen ? renderConfirm() : '') + renderConfirmDialog() + renderPriceChangeModal();
@@ -3882,10 +3978,13 @@ function rememberFocus(){ lastFocusedEl = document.activeElement; }
    deve empilhar uma entrada nova no histórico do navegador a cada
    clique — só a URL atual precisa refletir onde a pessoa está. */
 function currentRoute(){
-  if (state.page !== 'admin') return '';
-  var parts = ['admin', state.adminTab];
-  if (state.adminTab === 'financeiro') parts.push(state.financeTab);
-  return parts.join('/');
+  if (state.page === 'admin'){
+    var parts = ['admin', state.adminTab];
+    if (state.adminTab === 'financeiro') parts.push(state.financeTab);
+    return parts.join('/');
+  }
+  if (state.page === 'track') return state.trackCode ? 'pedido/'+state.trackCode : 'pedido';
+  return '';
 }
 function syncRoute(){
   var route = currentRoute();
@@ -3898,10 +3997,16 @@ function applyRouteFromHash(){
   var h = (location.hash || '').replace(/^#/, '');
   if (!h) return;
   var parts = h.split('/');
-  if (parts[0] !== 'admin') return;
-  state.page = 'admin';
-  if (parts[1]) state.adminTab = parts[1];
-  if (parts[1] === 'financeiro' && parts[2]) state.financeTab = parts[2];
+  if (parts[0] === 'admin'){
+    state.page = 'admin';
+    if (parts[1]) state.adminTab = parts[1];
+    if (parts[1] === 'financeiro' && parts[2]) state.financeTab = parts[2];
+    return;
+  }
+  if (parts[0] === 'pedido'){
+    state.page = 'track';
+    if (parts[1]) { state.trackCode = parts[1]; lookupOrderTracking(parts[1]); }
+  }
 }
 function go(page){
   state.page = page; state.menuOpen = false; state.authError = '';
@@ -3995,6 +4100,13 @@ document.addEventListener('click', function(e){
 
   /* ---- navegação e chrome ---- */
   if (action === 'go') { e.preventDefault(); go(el.dataset.page); }
+  else if (action === 'goTrack') {
+    e.preventDefault();
+    state.confirmOpen = false;
+    state.page = 'track';
+    lookupOrderTracking(el.dataset.code);
+    syncRoute(); render(); window.scrollTo({ top:0 });
+  }
   else if (action === 'openModal') openModal();
   else if (action === 'closeModal') closeModal();
   else if (action === 'closeConfirm') { state.confirmOpen = false; state.lastOrder = null; render(); }
@@ -4129,7 +4241,7 @@ document.addEventListener('click', function(e){
   /* ---- encomendas ---- */
   else if (action === 'toggleProduced') {
     var op = state.orders.find(function(x){ return x.id === el.dataset.id; });
-    if (op) { op.produced = !op.produced; dbSet('orders/'+op.id+'/produced', op.produced); }
+    if (op) { op.produced = !op.produced; dbSet('orders/'+op.id+'/produced', op.produced); pushOrderTracking(op); }
     render();
   }
   else if (action === 'togglePaid') {
@@ -4577,6 +4689,7 @@ document.addEventListener('change', function(e){
       dbSet('orders/'+o.id+'/status', o.status);
       if (willCancel && !wasCancelled) restoreStockForOrder(o);
       else if (wasCancelled && !willCancel) reapplyStockForOrder(o);
+      pushOrderTracking(o);
     }
     render();
   }
@@ -4694,6 +4807,14 @@ document.addEventListener('change', function(e){
    EVENTOS — envio de formulário
 ========================================================= */
 document.addEventListener('submit', function(e){
+  var trackForm = e.target.closest('[data-action="trackForm"]');
+  if (trackForm){
+    e.preventDefault();
+    var codeEl = document.getElementById('track-code');
+    lookupOrderTracking(codeEl ? codeEl.value : '');
+    syncRoute();
+    return;
+  }
   var loginForm = e.target.closest('[data-action="loginForm"]');
   if (loginForm){
     e.preventDefault();
@@ -4797,6 +4918,7 @@ document.addEventListener('submit', function(e){
   if (btn){ btn.disabled = true; btn.innerHTML = 'Enviando…'; }
 
   dbPushOrder(order).then(function(){
+    pushOrderTracking(order);
     /* baixa otimista só na tela — a gravação real acontece na
        próxima sessão de admin (reconcileStock) */
     items.forEach(function(i){

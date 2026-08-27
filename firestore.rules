@@ -248,6 +248,17 @@ service cloud.firestore {
       allow read, update, delete: if request.auth != null;
       allow create: if true;
     }
+    // Cópia pública e reduzida (sem telefone) de um pedido, pra
+    // página de acompanhamento sem login. `get` (buscar pelo código
+    // exato, que a pessoa já tem em mãos) é liberado; `list` fica
+    // fechado pra ninguém enumerar a coleção inteira de pedidos.
+    match /lealchocoart_orderTracking/{code} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if true;
+      allow update: if request.auth != null;
+      allow delete: if false;
+    }
     match /lealchocoart_ingredients/{id} {
       allow read, write: if request.auth != null;
     }
