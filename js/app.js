@@ -82,6 +82,7 @@ function icon(name, size, color){
     logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
     edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>',
     grip:'<circle cx="9" cy="6" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="15" cy="6" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="9" cy="12" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="15" cy="12" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="9" cy="18" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="15" cy="18" r="1.4" style="fill:currentColor;stroke:none"/>',
+    download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
     camera:'<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
     calendar:'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
     chart:'<line x1="4" y1="20" x2="4" y2="12"/><line x1="10" y1="20" x2="10" y2="7"/><line x1="16" y1="20" x2="16" y2="4"/><line x1="2" y1="21" x2="22" y2="21"/>',
@@ -244,6 +245,27 @@ var remindedOrderIds = {};
 function currency(v){ return Number(v||0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' }); }
 function num(v, d){ return Number(v||0).toLocaleString('pt-BR', { minimumFractionDigits: d||0, maximumFractionDigits: d||0 }); }
 function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+/* ---------- exportar CSV ----------
+   Sem servidor próprio, então "exportar" é: montar o texto, empacotar
+   num Blob e simular o clique num <a download> descartável. Excel no
+   Brasil lê separado por ; (vírgula é decimal aqui) e precisa do BOM
+   UTF-8 pra acentuação não virar caractere estranho. */
+function csvCell(v){
+  var s = v === null || v === undefined ? '' : String(v);
+  if (/[;"\n]/.test(s)) s = '"' + s.replace(/"/g,'""') + '"';
+  return s;
+}
+function downloadCsv(filename, rows){
+  var csv = '﻿' + rows.map(function(r){ return r.map(csvCell).join(';'); }).join('\r\n');
+  var blob = new Blob([csv], { type:'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+}
+function csvNum(n){ return String(Number(n)||0).replace('.',','); }
 function pad2(n){ return n < 10 ? '0'+n : ''+n; }
 function todayStr(){ return dateToStr(new Date()); }
 function dateToStr(d){ return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
@@ -2413,7 +2435,10 @@ function pageAdminEncomendas(){
   }
 
   return todayBlock + prodBlock + filterBar +
-    '<p class="hint" style="margin:-8px 0 14px">'+list.length+' de '+state.orders.length+' pedidos</p>' + body;
+    '<p class="hint" style="margin:-8px 0 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+      '<span>'+list.length+' de '+state.orders.length+' pedidos</span>' +
+      (list.length ? '<button class="btn-ghost" style="padding:5px 12px;min-height:0" data-action="exportOrdersCsv">'+icon('download',13)+' Exportar CSV</button>' : '') +
+    '</p>' + body;
 }
 
 /* =========================================================
@@ -2616,6 +2641,21 @@ function periodStart(period){
   if (period === 'mes') return dateToStr(new Date(d.getFullYear(), d.getMonth(), 1));
   return '0000-00-00';
 }
+/* Início e fim (exclusivo) do período ANTERIOR equivalente — "30 dias"
+   compara com os 30 dias antes desses, "este mês" com o mês passado
+   inteiro. "Desde o começo" não tem um "anterior" que faça sentido. */
+function periodPrevRange(period){
+  var d = new Date();
+  if (period === '30'){
+    var curFrom = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 29);
+    return { from: dateToStr(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 59)), to: dateToStr(curFrom) };
+  }
+  if (period === 'mes'){
+    var curFrom2 = new Date(d.getFullYear(), d.getMonth(), 1);
+    return { from: dateToStr(new Date(d.getFullYear(), d.getMonth() - 1, 1)), to: dateToStr(curFrom2) };
+  }
+  return null;
+}
 function costPerUnitByName(){
   var map = {};
   state.products.forEach(function(p){ map[p.name] = recipeCosts(p); });
@@ -2696,19 +2736,44 @@ function computeAnalytics(){
     return ev.date >= from;
   }).reduce(function(s,ev){ return s + lossEventCost(ev); }, 0);
 
+  /* período anterior equivalente, só pra responder "subiu ou caiu" —
+     sem isso todo número da tela é absoluto, sem noção de tendência */
+  var prevRange = periodPrevRange(state.analyticsPeriod);
+  var prev = null;
+  if (prevRange){
+    var prevRevenue = 0, prevCost = 0;
+    state.orders.forEach(function(o){
+      if (o.status === 'cancelado') return;
+      if (state.analyticsOnlyDone && o.status !== 'concluido') return;
+      var d = orderDate(o);
+      if (!d || d < prevRange.from || d >= prevRange.to) return;
+      var rev = Number(o.total||0);
+      prevRevenue += rev;
+      (o.items||[]).forEach(function(i){ prevCost += orderItemUnitCost(i, costsById, costsByName) * Number(i.qty||0); });
+    });
+    var prevLoss = state.lossEvents.filter(function(ev){ return ev.date >= prevRange.from && ev.date < prevRange.to; })
+      .reduce(function(s,ev){ return s + lossEventCost(ev); }, 0);
+    prev = { revenue:prevRevenue, profit:prevRevenue-prevCost, netResult:(prevRevenue-prevCost)-prevLoss };
+  }
+
   var toArr = function(m){ return Object.keys(m).map(function(k){ return m[k]; }); };
+  var allProductRows = toArr(productMap).map(function(p){ p.profit = p.revenue - p.cost; return p; }).sort(function(a,b){ return b.profit - a.profit; });
   var totalProfit = totalRevenue - totalCost;
+  var netResult = totalProfit - totalLoss;
   return {
     totalRevenue:totalRevenue, totalCost:totalCost, totalProfit: totalProfit,
-    totalLoss: totalLoss, netResult: totalProfit - totalLoss,
+    totalLoss: totalLoss, netResult: netResult,
     marginPct: totalRevenue > 0 ? ((totalRevenue-totalCost)/totalRevenue)*100 : 0,
     totalOrders: orders.length, totalUnits: totalUnits,
     avgTicket: orders.length ? totalRevenue/orders.length : 0,
-    topProducts: toArr(productMap).map(function(p){ p.profit = p.revenue - p.cost; return p; }).sort(function(a,b){ return b.profit - a.profit; }).slice(0,8),
+    allProducts: allProductRows, topProducts: allProductRows.slice(0,8),
     topCustomers: toArr(customerMap).sort(function(a,b){ return b.total-a.total; }).slice(0,6),
     byLocation: toArr(locMap).sort(function(a,b){ return b.revenue-a.revenue; }),
     byWeekday: WEEKDAY_LABELS.map(function(lbl,idx){ return { label:lbl, revenue:(wdMap[idx]||{}).revenue||0, profit:(wdMap[idx]||{}).profit||0 }; }),
-    dayMap: dayMap
+    dayMap: dayMap,
+    prev: prev,
+    revenueDeltaPct: (prev && prev.revenue > 0) ? ((totalRevenue-prev.revenue)/prev.revenue)*100 : null,
+    netResultDelta: prev ? (netResult - prev.netResult) : null
   };
 }
 
@@ -2737,14 +2802,25 @@ function pageAdminAnalises(){
       return '<button class="subtab'+(state.analyticsPeriod===p[0]?' active':'')+'" data-action="setAnalyticsPeriod" data-period="'+p[0]+'">'+p[1]+'</button>';
     }).join('') + '</div>' +
     '<label class="check-row" style="margin-left:auto"><input type="checkbox" data-action="toggleOnlyDone" '+(state.analyticsOnlyDone?'checked':'')+'> Contar só concluídos</label>' +
+    '<button class="btn-ghost" data-action="exportAnalyticsCsv">'+icon('download',13)+' Exportar CSV</button>' +
   '</div>';
 
+  /* "subiu ou caiu" comparado ao período anterior equivalente — sem
+     isso todo tile é um número solto, sem noção de tendência */
+  var revenueDeltaSub = '';
+  if (a.revenueDeltaPct !== null){
+    var arrow = a.revenueDeltaPct > 0.5 ? '↑' : (a.revenueDeltaPct < -0.5 ? '↓' : '=');
+    revenueDeltaSub = arrow + ' ' + Math.abs(a.revenueDeltaPct).toFixed(0) + '% vs. período anterior';
+  }
+  var netResultSub = 'lucro das vendas − perdas' + (a.netResultDelta === null ? '' :
+    (a.netResultDelta >= 0 ? ' · +' : ' · ') + currency(a.netResultDelta) + ' vs. anterior');
+
   var tiles = '<div class="stat-grid">' +
-    statTile('Faturamento', currency(a.totalRevenue), 'coin', 'brand') +
+    statTile('Faturamento', currency(a.totalRevenue), 'coin', 'brand', revenueDeltaSub) +
     statTile('Custo de produção', currency(a.totalCost), 'package', '', 'ingredientes + embalagem' + (Number(state.financialGoals.laborHourCost)>0 ? ' + mão de obra' : '')) +
     statTile('Lucro das vendas', currency(a.totalProfit), 'chart', a.totalProfit >= 0 ? 'pos' : 'neg', 'margem de ' + a.marginPct.toFixed(1) + '%') +
     statTile('Perdas no período', currency(a.totalLoss), 'alert', a.totalLoss > 0 ? 'neg' : '') +
-    statTile('Resultado líquido', currency(a.netResult), 'wallet', a.netResult >= 0 ? 'pos' : 'neg', 'lucro das vendas − perdas') +
+    statTile('Resultado líquido', currency(a.netResult), 'wallet', a.netResult >= 0 ? 'pos' : 'neg', netResultSub) +
     statTile('Pedidos', a.totalOrders, 'clipboard', '', a.totalUnits + ' itens vendidos') +
     statTile('Ticket médio', currency(a.avgTicket), 'bag') +
   '</div>';
@@ -3371,6 +3447,24 @@ function pageFinancePerdas(){
     statTile('Maior perda única', pior ? currency(pior.cost) : '—', 'trash', '', pior ? esc(pior.p ? pior.p.name : '—') : '') +
   '</div>';
 
+  /* agrupado por doce em vez de por data — é isso que revela "esse
+     doce estraga toda hora", padrão que some numa lista cronológica */
+  var byProduct = {};
+  rows.forEach(function(r){
+    var key = r.p ? r.p.id : '—';
+    var name = r.p ? r.p.name : '(doce removido)';
+    if (!byProduct[key]) byProduct[key] = { name:name, count:0, cost:0 };
+    byProduct[key].count += 1;
+    byProduct[key].cost += r.cost;
+  });
+  var grouped = Object.keys(byProduct).map(function(k){ return byProduct[k]; }).sort(function(a,b){ return b.cost - a.cost; });
+  var maxGrouped = Math.max.apply(null, grouped.map(function(g){ return g.cost; }).concat([1]));
+  var groupedCard = rows.length > 1 ? '<div class="admin-card">' +
+    '<div class="admin-card-head">'+icon('chart',18,'var(--brand)')+'<h3 style="flex:1">Prejuízo por doce</h3></div>' +
+    '<p class="hint" style="margin:-10px 0 14px">Pra que serve: ver se é sempre o mesmo doce que dá errado, em vez de espalhado igual na lista abaixo.</p>' +
+    grouped.map(function(g){ return barRow(g.name, g.count+' perda(s) · '+currency(g.cost), Math.round(g.cost/maxGrouped*100), 'neg'); }).join('') +
+  '</div>' : '';
+
   var table = '<div class="admin-card"><div class="admin-card-head">'+icon('list',18,'var(--brand)')+'<h3 style="flex:1">Perdas registradas</h3>' +
     '<span class="pill pill-danger">'+currency(totalAll)+'</span></div>' +
     '<div class="tbl-wrap"><table class="tbl">' +
@@ -3386,7 +3480,7 @@ function pageFinancePerdas(){
       '</tr>';
     }).join('') + '</tbody></table></div></div>';
 
-  return form + tiles + table;
+  return form + tiles + groupedCard + table;
 }
 
 /* ---------- histórico de preços ---------- */
@@ -4044,6 +4138,18 @@ document.addEventListener('click', function(e){
     render();
   }
   else if (action === 'clearOrderFilter') { state.orderFilter = { q:'', status:'todos', when:'todos', paid:'todos' }; render(); }
+  else if (action === 'exportOrdersCsv') {
+    var rows = [['Código','Data','Horário','Nome','Telefone','Local','Itens','Total','Status','Pago','Forma de pagamento','Produzido']];
+    filteredOrders().forEach(function(o){
+      rows.push([
+        o.code||'', orderDate(o)||'', o.horario||'', o.nome||'', o.telefone||'', o.local||'',
+        (o.items||[]).map(function(i){ return i.qty+'x '+i.name; }).join(', '),
+        csvNum(o.total), statusLabel(o.status||'pendente'), o.paid?'Sim':'Não',
+        o.payment?paymentLabel(o.payment):'', o.produced?'Sim':'Não'
+      ]);
+    });
+    downloadCsv('pedidos-lealchocoart-'+todayStr()+'.csv', rows);
+  }
 
   /* ---- agenda ---- */
   else if (action === 'toggleAddScheduleRule') { state.addingScheduleRule = !state.addingScheduleRule; render(); }
@@ -4435,6 +4541,24 @@ document.addEventListener('change', function(e){
   else if (action === 'orderFilterStatus') { state.orderFilter.status = el.value; render(); }
   else if (action === 'orderFilterPaid') { state.orderFilter.paid = el.value; render(); }
   else if (action === 'toggleOnlyDone') { state.analyticsOnlyDone = el.checked; render(); }
+  else if (action === 'exportAnalyticsCsv') {
+    var an = computeAnalytics();
+    var rows = [
+      ['Resumo do período', ''],
+      ['Faturamento', csvNum(an.totalRevenue)],
+      ['Custo de produção', csvNum(an.totalCost)],
+      ['Lucro das vendas', csvNum(an.totalProfit)],
+      ['Perdas no período', csvNum(an.totalLoss)],
+      ['Resultado líquido', csvNum(an.netResult)],
+      ['Pedidos', an.totalOrders],
+      ['Ticket médio', csvNum(an.avgTicket)],
+      [], ['Doce','Unidades','Faturamento','Custo','Lucro']
+    ];
+    an.allProducts.forEach(function(p){
+      rows.push([p.name, p.qty, csvNum(p.revenue), csvNum(p.cost), csvNum(p.profit)]);
+    });
+    downloadCsv('analises-lealchocoart-'+todayStr()+'.csv', rows);
+  }
 
   /* doces */
   else if (action === 'setPrice') { var p = getProduct(el.dataset.id); if (p) { p.price = Number(el.value) || 0; dbSet('products/'+p.id+'/price', p.price); render(); } }
