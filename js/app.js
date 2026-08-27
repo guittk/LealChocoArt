@@ -4620,6 +4620,45 @@ document.addEventListener('drop', function(e){
 });
 document.addEventListener('dragend', function(){ dragCtx = null; clearDragMarks(); });
 
+/* Celular/tablet não dispara dragstart/dragover/drop pra elementos
+   `draggable` comuns — a API HTML5 de arrastar-e-soltar é praticamente
+   só de mouse. Sem isso, a alcinha simplesmente não fazia nada num
+   toque. `{ passive:false }` porque precisa de preventDefault pra
+   impedir a página de rolar enquanto o dedo arrasta a linha. */
+document.addEventListener('touchstart', function(e){
+  var handle = e.target.closest ? e.target.closest('[data-draghandle]') : null;
+  if (!handle) return;
+  var row = dragRowFrom(handle);
+  if (!row) return;
+  dragCtx = { zone: row.dataset.dragzone, from: Number(row.dataset.dragindex) };
+  row.classList.add('drag-source');
+}, { passive:true });
+document.addEventListener('touchmove', function(e){
+  if (!dragCtx) return;
+  e.preventDefault();
+  var touch = e.touches[0];
+  var target = document.elementFromPoint(touch.clientX, touch.clientY);
+  var row = dragRowFrom(target);
+  if (!row || row.dataset.dragzone !== dragCtx.zone) return;
+  if (!row.classList.contains('drag-over')){
+    clearDragMarks();
+    row.classList.add('drag-over');
+  }
+}, { passive:false });
+document.addEventListener('touchend', function(e){
+  if (!dragCtx) return;
+  var touch = e.changedTouches[0];
+  var target = document.elementFromPoint(touch.clientX, touch.clientY);
+  var row = dragRowFrom(target);
+  var ctx = dragCtx;
+  dragCtx = null;
+  clearDragMarks();
+  if (!row || row.dataset.dragzone !== ctx.zone) return;
+  applyDragReorder(ctx.zone, ctx.from, Number(row.dataset.dragindex));
+  render();
+});
+document.addEventListener('touchcancel', function(){ dragCtx = null; clearDragMarks(); });
+
 /* =========================================================
    EVENTOS — teclado
 ========================================================= */
