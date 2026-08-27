@@ -204,6 +204,7 @@ var state = {
   addingIngredient: false,
   addingPackaging: false,
   addingLoss: false,
+  lossDraft: null,        /* rascunho da perda em edição: { productId, batches, date, note, includeLabor, includePackaging, lostIngredientIds } */
   confirmDialog: null,          /* { title, text, danger, action, payload } */
   priceChangeModal: null,
   historySelectedKeys: null,
@@ -471,29 +472,52 @@ function recipeCosts(p){
 
 /* Custo de UMA fornada inteira (a receita completa, não uma unidade) —
    é a base para calcular o prejuízo quando uma massa/fornada dá errado.
-   Embalagem normalmente ainda não foi usada nesse ponto (o doce nem
-   chegou a existir), por isso fica de fora por padrão. */
-function batchCost(p){
+   Nem tudo que entra na receita necessariamente estraga junto — às
+   vezes só a massa foi perdida e a cobertura nem chegou a ser feita —
+   por isso cada ingrediente pode ser marcado como perdido ou não
+   (`lostIngredientIds`), e mão de obra / embalagem entram à parte. */
+function lossBreakdown(productId, batches, lostIngredientIds, includeLabor, includePackaging){
+  var p = getProduct(productId);
+  batches = Number(batches) || 0;
+  if (!p || batches <= 0) return { ingredientRows:[], ingredientCost:0, laborCost:0, packagingCost:0, total:0 };
   var r = ensureRecipe(p);
+  var lost = lostIngredientIds || [];
+  var ingredientRows = r.ingredientUsage.map(function(u){
+    var ing = getIngredient(u.ingredientId); if (!ing) return null;
+    var qty = (Number(u.qty) || 0) * batches;
+    var lostFlag = lost.indexOf(u.ingredientId) !== -1;
+    return { ingredient:ing, qty:qty, unit:ing.unit||'un', lost:lostFlag, cost: lostFlag ? itemUnitCost(ing) * qty : 0 };
+  }).filter(Boolean);
+  var ingredientCost = ingredientRows.reduce(function(s,row){ return s + row.cost; }, 0);
+
   var c = recipeCosts(p);
   var g = state.financialGoals || {};
   var hourCost = Number(g.laborHourCost) || 0;
   var batchMin = Number(r.batchMinutes) || 0;
+  var laborPerBatch = (hourCost > 0 && batchMin > 0) ? (batchMin / 60 * hourCost) : 0;
+  var packagingPerBatch = c.packagingPerUnit * c.yieldQty;
+  var laborCost = includeLabor ? laborPerBatch * batches : 0;
+  var packagingCost = includePackaging ? packagingPerBatch * batches : 0;
+
   return {
-    ingredientCost: c.ingredientTotal,
-    laborCost: (hourCost > 0 && batchMin > 0) ? (batchMin / 60 * hourCost) : 0,
-    packagingCost: c.packagingPerUnit * c.yieldQty,
-    yieldQty: c.yieldQty
+    ingredientRows:ingredientRows, ingredientCost:ingredientCost,
+    laborCost:laborCost, packagingCost:packagingCost,
+    laborAvailable: laborPerBatch > 0,
+    total: ingredientCost + laborCost + packagingCost
   };
 }
 function lossEventCost(ev){
-  var p = getProduct(ev.productId); if (!p) return 0;
-  var b = batchCost(p);
-  var batches = Number(ev.batches) || 0;
-  var cost = b.ingredientCost * batches;
-  if (ev.includeLabor) cost += b.laborCost * batches;
-  if (ev.includePackaging) cost += b.packagingCost * batches;
-  return cost;
+  return lossBreakdown(ev.productId, ev.batches, ev.lostIngredientIds, ev.includeLabor, ev.includePackaging).total;
+}
+/* Por padrão marca TODO ingrediente da receita como perdido — o caso
+   comum é a fornada inteira ir pro lixo. A pessoa desmarca só o que
+   não chegou a ser usado (ex.: cobertura, se só a massa estragou). */
+function allRecipeIngredientIds(p){
+  return p ? ensureRecipe(p).ingredientUsage.map(function(u){ return u.ingredientId; }) : [];
+}
+function makeLossDraft(productId){
+  var p = getProduct(productId);
+  return { productId:productId||'', batches:1, date:todayStr(), note:'', includeLabor:true, includePackaging:false, lostIngredientIds:allRecipeIngredientIds(p) };
 }
 
 /* Quanto custa comprar, PELA PRIMEIRA VEZ, todos os ingredientes de UMA
@@ -929,6 +953,7 @@ function pageFinanceReposicao(){
   var chart = '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('calendar',18,'var(--brand)')+'<h3 style="flex:1">Quando cada insumo acaba</h3>' +
       '<span class="pill pill-lilac">próximos 6 meses</span></div>' +
+    '<p class="hint" style="margin-top:-8px">Pra que serve: saber com antecedência quando comprar de novo, sem depender de reparar que o pote esvaziou.</p>' +
     restockGantt(plan) + '</div>';
 
   var table = '<div class="admin-card">' +
@@ -2680,7 +2705,8 @@ function pageFinanceResumo(){
 
   return alerts + tiles +
     '<div class="admin-card"><div class="admin-card-head">'+icon('list',18,'var(--brand)')+'<h3 style="flex:1">Custo e lucro por doce</h3></div>'+table+'</div>' +
-    '<div class="dash-grid">' + dashPanel('Onde vai cada real do preço', 'scale', bars) + '</div>';
+    '<div class="dash-grid">' + dashPanel('Onde vai cada real do preço', 'scale',
+      '<p class="hint" style="margin:-4px 0 14px">Pra que serve: ver de relance quais doces têm gordura pra cortar no preço e quais já estão no talo.</p>' + bars) + '</div>';
 }
 
 /* ---------- insumos ---------- */
@@ -3046,32 +3072,58 @@ function pageFinanceCompras(){
 }
 
 /* ---------- perdas (fornada que deu errado) ---------- */
+function lossDraftForm(){
+  var d = state.lossDraft;
+  var prods = state.products.filter(function(p){ return !isHidden(p) && ensureRecipe(p).ingredientUsage.length > 0; });
+  if (!prods.length){
+    return '<div class="banner banner-warn">'+icon('alert',16)+'<span>Nenhum doce tem receita montada ainda — sem isso não dá pra calcular o custo da perda. Monte em <b>Receitas</b>.</span></div>';
+  }
+  var p = getProduct(d.productId) || prods[0];
+  if (p.id !== d.productId){ d.productId = p.id; d.lostIngredientIds = allRecipeIngredientIds(p); }
+  var b = lossBreakdown(d.productId, d.batches, d.lostIngredientIds, d.includeLabor, d.includePackaging);
+
+  var checklist = '<div class="tbl-wrap"><table class="tbl" style="min-width:0">' +
+    '<thead><tr><th></th><th>O que foi perdido</th><th class="n">Quantidade</th><th class="n">Custo</th></tr></thead><tbody>' +
+    b.ingredientRows.map(function(row){
+      return '<tr>' +
+        '<td><input type="checkbox" data-action="toggleLossDraftIngredient" data-ingid="'+row.ingredient.id+'" '+(row.lost?'checked':'')+' aria-label="'+esc(row.ingredient.name)+' foi perdido"></td>' +
+        '<td class="k">'+esc(row.ingredient.name)+'</td>' +
+        '<td class="n">'+num(row.qty, row.qty % 1 === 0 ? 0 : 1)+' '+esc(row.unit)+'</td>' +
+        '<td class="n" style="color:'+(row.lost?'var(--danger)':'var(--ink-3)')+';font-weight:800">'+(row.lost?currency(row.cost):'—')+'</td>' +
+      '</tr>';
+    }).join('') +
+    '<tr><td><input type="checkbox" data-action="toggleLossDraftLabor" '+(d.includeLabor?'checked':'')+' aria-label="Mão de obra perdida"></td>' +
+      '<td class="k">Mão de obra da fornada</td><td class="n">—</td>' +
+      '<td class="n" style="color:'+(d.includeLabor && b.laborCost>0?'var(--danger)':'var(--ink-3)')+';font-weight:800">'+(b.laborAvailable ? (d.includeLabor?currency(b.laborCost):'—') : 'sem custo/hora definido')+'</td></tr>' +
+    '<tr><td><input type="checkbox" data-action="toggleLossDraftPackaging" '+(d.includePackaging?'checked':'')+' aria-label="Embalagem perdida"></td>' +
+      '<td class="k">Embalagem (só se já foi usada)</td><td class="n">—</td>' +
+      '<td class="n" style="color:'+(d.includePackaging?'var(--danger)':'var(--ink-3)')+';font-weight:800">'+(d.includePackaging?currency(b.packagingCost):'—')+'</td></tr>' +
+    '<tr class="total-row"><td></td><td>Prejuízo desta perda</td><td class="n"></td><td class="n" style="color:var(--danger)">'+currency(b.total)+'</td></tr>' +
+    '</tbody></table></div>';
+
+  return '<div class="new-card"><h3>Nova perda</h3>' +
+    '<p class="hint" style="margin-top:-6px">Marque só o que realmente estragou — se a cobertura ainda nem tinha sido feita, desmarque ela e o prejuízo conta só a massa.</p>' +
+    '<div class="fin-grid-3">' +
+      '<div class="field"><label for="lp-produto">Doce</label><select class="input" id="lp-produto" data-action="setLossDraftProduct">' +
+        prods.map(function(x){ return '<option value="'+x.id+'"'+(x.id===d.productId?' selected':'')+'>'+esc(x.name)+'</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="field"><label for="lp-fornadas">Fornadas perdidas</label><input class="input" id="lp-fornadas" type="number" inputmode="decimal" step="0.5" min="0" value="'+d.batches+'" data-action="setLossDraftBatches"></div>' +
+      '<div class="field"><label for="lp-data">Data</label><input class="input" id="lp-data" type="date" value="'+d.date+'" data-action="setLossDraftDate"></div>' +
+    '</div>' +
+    '<div class="field"><label for="lp-nota">O que aconteceu (opcional)</label><input class="input" id="lp-nota" placeholder="Ex: massa talhou, forno queimou" value="'+esc(d.note)+'" data-action="setLossDraftNote"></div>' +
+    checklist +
+    '<div style="display:flex;gap:10px;margin-top:16px">' +
+      '<button class="btn-primary sm" data-action="createLossEvent">Salvar perda de '+currency(b.total)+'</button>' +
+      '<button class="btn-ghost" data-action="toggleAddLoss">Cancelar</button>' +
+    '</div></div>';
+}
 function pageFinancePerdas(){
   var prods = state.products.filter(function(p){ return !isHidden(p); });
   if (!prods.length) return '<div class="slot-empty">Cadastre um doce primeiro.</div>';
-  var withRecipe = prods.filter(function(p){ return ensureRecipe(p).ingredientUsage.length > 0; });
 
   var form = !state.addingLoss
     ? '<button class="btn-secondary sm" data-action="toggleAddLoss" style="margin-bottom:18px">'+icon('plus',15)+' Registrar perda</button>'
-    : (!withRecipe.length
-      ? '<div class="banner banner-warn">'+icon('alert',16)+'<span>Nenhum doce tem receita montada ainda — sem isso não dá pra calcular o custo da perda. Monte em <b>Receitas</b>.</span></div>'
-      : '<div class="new-card"><h3>Nova perda</h3>' +
-        '<div class="fin-grid-3">' +
-          '<div class="field"><label for="lp-produto">Doce</label><select class="input" id="lp-produto">' +
-            withRecipe.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join('') +
-          '</select></div>' +
-          '<div class="field"><label for="lp-fornadas">Fornadas perdidas</label><input class="input" id="lp-fornadas" type="number" inputmode="decimal" step="0.5" min="0" value="1"></div>' +
-          '<div class="field"><label for="lp-data">Data</label><input class="input" id="lp-data" type="date" value="'+todayStr()+'"></div>' +
-        '</div>' +
-        '<div class="field"><label for="lp-nota">O que aconteceu (opcional)</label><input class="input" id="lp-nota" placeholder="Ex: massa talhou, forno queimou"></div>' +
-        '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px">' +
-          '<label class="check-row" style="min-height:36px"><input type="checkbox" id="lp-mao" checked> Conta a mão de obra</label>' +
-          '<label class="check-row" style="min-height:36px"><input type="checkbox" id="lp-emb"> Embalagem já foi usada</label>' +
-        '</div>' +
-        '<div style="display:flex;gap:10px">' +
-          '<button class="btn-primary sm" data-action="createLossEvent">Salvar</button>' +
-          '<button class="btn-ghost" data-action="toggleAddLoss">Cancelar</button>' +
-        '</div></div>');
+    : lossDraftForm();
 
   if (!state.lossEvents.length) return form + '<p class="empty-note">Nenhuma perda registrada.</p>';
 
@@ -3111,6 +3163,11 @@ function priceHistoryItems(){
   var arr = [];
   state.ingredients.forEach(function(i){ arr.push({ kind:'ingredient', id:i.id, name:i.name, item:i }); });
   state.packagingItems.forEach(function(i){ arr.push({ kind:'packaging', id:i.id, name:i.name, item:i }); });
+  /* cor fixada pela ordem da lista inteira (não da seleção filtrada),
+     senão a cor de cada item pula toda vez que alguém desmarca outro
+     no seletor — a mesma cor precisa valer no chip, na tabela e no
+     gráfico o tempo todo. */
+  arr.forEach(function(x, i){ x.color = CHART_COLORS[i % CHART_COLORS.length]; });
   return arr;
 }
 /* Série diária: um ponto por dia entre o primeiro registro e hoje.
@@ -3131,7 +3188,7 @@ function dailyPriceSeries(items){
       .filter(function(p){ return p && p.date; })
       .slice()
       .sort(function(a,b){ return a.date < b.date ? -1 : 1; });
-    return { name:x.name, color:CHART_COLORS[i % CHART_COLORS.length], hist:h, current:Number(x.item.packagePrice)||0 };
+    return { name:x.name, color:x.color, hist:h, current:Number(x.item.packagePrice)||0 };
   }).filter(function(s){ return s.hist.length > 0; });
   if (!series.length) return { days:[], series:[] };
 
@@ -3218,14 +3275,15 @@ function priceHistoryMultiChart(items){
     grid + paths + labels + '</svg></div>' + legend +
     '<p class="hint">'+range+'. Dias sem alteração repetem o último preço — por isso a linha continua reta em vez de sumir.</p>';
 }
-function itemHistoryRowsHtml(item){
+function itemHistoryRowsHtml(item, color){
   var h = (item.priceHistory || []).slice().sort(function(a,b){ return a.date < b.date ? 1 : -1; });
   if (!h.length) return '<p class="empty-note">Sem alterações registradas.</p>';
+  var dot = color ? '<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+color+';margin-right:8px;vertical-align:middle"></i>' : '';
   return '<div class="tbl-wrap"><table class="tbl" style="min-width:0"><thead><tr><th>Data</th><th>Loja</th><th class="n">Preço</th><th class="n">Variação</th></tr></thead><tbody>' +
     h.map(function(p, i){
       var prev = h[i+1];
       var diff = prev ? Number(p.price) - Number(prev.price) : 0;
-      return '<tr><td class="k">'+esc(dateLabel(strToDate(p.date)))+'</td><td>'+esc(p.store||'—')+'</td><td class="n">'+currency(p.price)+'</td>' +
+      return '<tr><td class="k">'+dot+esc(dateLabel(strToDate(p.date)))+'</td><td>'+esc(p.store||'—')+'</td><td class="n">'+currency(p.price)+'</td>' +
         '<td class="n" style="color:'+(diff>0?'var(--danger)':(diff<0?'var(--ok)':'var(--ink-3)'))+'">'+(prev?((diff>0?'+':'')+currency(diff)):'—')+'</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
@@ -3238,31 +3296,64 @@ function pageFinanceHistorico(){
 
   var picker = '<div class="admin-card"><div class="admin-card-head">'+icon('filter',18,'var(--brand)')+'<h3 style="flex:1">Itens no gráfico</h3>' +
     '<button class="btn-ghost" data-action="selectAllHistory">Mostrar todos</button></div>' +
-    '<div style="display:flex;flex-wrap:wrap;gap:10px 20px">' + items.map(function(x){
+    '<p class="hint" style="margin:-8px 0 14px">Clique para incluir ou tirar um item do gráfico e das tabelas abaixo. A cor de cada bolinha é a mesma em todo lugar — chip, tabela e linha do gráfico.</p>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:10px">' + items.map(function(x){
       var k = x.kind+':'+x.id;
-      return '<label class="check-row" style="min-height:36px"><input type="checkbox" data-action="toggleHistoryItem" data-key="'+k+'" '+(selected.indexOf(k)!==-1?'checked':'')+'> '+esc(x.name)+'</label>';
+      var on = selected.indexOf(k) !== -1;
+      return '<button class="history-chip'+(on?' active':'')+'" data-action="toggleHistoryItem" data-key="'+k+'" aria-pressed="'+on+'">' +
+        '<i style="background:'+x.color+'"></i>'+esc(x.name)+'</button>';
     }).join('') + '</div></div>';
 
   var chart = '<div class="admin-card"><div class="admin-card-head">'+icon('chart',18,'var(--brand)')+'<h3 style="flex:1">Evolução dos preços</h3></div>' +
+    '<p class="hint" style="margin:-6px 0 14px">Pra que serve: ver se um insumo está subindo de preço a ponto de precisar reajustar a receita ou trocar de fornecedor.</p>' +
     priceHistoryMultiChart(chosen) + '</div>';
 
   var tables = chosen.map(function(x){
     return '<div class="admin-card"><div class="admin-card-head">'+icon(x.kind==='ingredient'?'package':'truck',17,'var(--brand)')+
       '<h3 style="flex:1">'+esc(x.name)+'</h3><span class="pill pill-lilac">'+currency(x.item.packagePrice||0)+'</span></div>' +
-      itemHistoryRowsHtml(x.item) + '</div>';
+      itemHistoryRowsHtml(x.item, x.color) + '</div>';
   }).join('');
 
   return picker + chart + tables;
 }
 
+/* Financeiro tem 9 sub-telas — direto num só nível de abas isso vira
+   uma parede de botões sem hierarquia. Agrupadas por "o que você tá
+   tentando fazer", ficam 4 grupos fáceis de escanear; o grupo ativo é
+   derivado da aba selecionada (`state.financeTab`), sem estado novo
+   pra manter em sincronia. */
+var FINANCE_GROUPS = [
+  { key:'geral', label:'Visão geral', icon:'scale',
+    why:'Como o negócio está indo: lucro por doce e progresso das metas do mês.',
+    tabs:[['resumo','Resumo','scale'], ['metas','Metas','sparkle']] },
+  { key:'insumos', label:'Insumos', icon:'package',
+    why:'Cadastro de ingredientes e embalagens: preço, onde comprou, e como isso mudou no tempo.',
+    tabs:[['ingredientes','Ingredientes','package'], ['embalagens','Embalagens','truck'], ['historico','Histórico de preço','chart']] },
+  { key:'receitas', label:'Receitas', icon:'cake',
+    why:'Monte a receita de cada doce — é ela que alimenta todo o resto (custo, lucro, compras).',
+    tabs:[['receitas','Receitas','cake']] },
+  { key:'producao', label:'Produção', icon:'cart',
+    why:'Planeje uma fornada: quanto comprar, quando o insumo acaba, e o prejuízo quando algo dá errado.',
+    tabs:[['compras','Compras','cart'], ['reposicao','Reposição','refresh'], ['perdas','Perdas','alert']] }
+];
+function financeGroupFor(tab){
+  return FINANCE_GROUPS.filter(function(g){ return g.tabs.some(function(x){ return x[0] === tab; }); })[0] || FINANCE_GROUPS[0];
+}
 function pageAdminFinanceiro(){
-  var tabs = [['resumo','Resumo','scale'],['ingredientes','Ingredientes','package'],['embalagens','Embalagens','truck'],
-              ['receitas','Receitas','cake'],['metas','Metas','sparkle'],['compras','Compras','cart'],
-              ['reposicao','Reposição','refresh'],['perdas','Perdas','alert'],['historico','Histórico','chart']];
   var t = state.financeTab;
-  var nav = '<div class="subtab-row">' + tabs.map(function(x){
-    return '<button class="subtab'+(t===x[0]?' active':'')+'" data-action="financeTab" data-ftab="'+x[0]+'">'+icon(x[2],13)+' '+x[1]+'</button>';
+  var group = financeGroupFor(t);
+
+  var groupNav = '<div class="subtab-row group">' + FINANCE_GROUPS.map(function(g){
+    return '<button class="subtab'+(g.key===group.key?' active':'')+'" data-action="financeTab" data-ftab="'+g.tabs[0][0]+'">'+icon(g.icon,13)+' '+g.label+'</button>';
   }).join('') + '</div>';
+
+  var tabNav = group.tabs.length > 1
+    ? '<div class="subtab-row sub">' + group.tabs.map(function(x){
+        return '<button class="subtab sm'+(t===x[0]?' active':'')+'" data-action="financeTab" data-ftab="'+x[0]+'">'+icon(x[2],12)+' '+x[1]+'</button>';
+      }).join('') + '</div>'
+    : '';
+
+  var why = '<p class="hint" style="margin:-6px 0 18px">'+icon('info',12)+' '+esc(group.why)+'</p>';
 
   var body = '';
   if (t === 'resumo') body = pageFinanceResumo();
@@ -3274,7 +3365,7 @@ function pageAdminFinanceiro(){
   else if (t === 'reposicao') body = pageFinanceReposicao();
   else if (t === 'perdas') body = pageFinancePerdas();
   else if (t === 'historico') body = pageFinanceHistorico();
-  return nav + body;
+  return groupNav + tabNav + why + body;
 }
 
 /* =========================================================
@@ -3439,8 +3530,37 @@ function syncModalState(){
 function rememberFocus(){ lastFocusedEl = document.activeElement; }
 
 /* ---------- navegação ---------- */
+/* Rota (hash) além do `state` em memória: sem isso, um F5 na página
+   de admin perdia toda a navegação e voltava pra home, porque nada
+   do estado (page/adminTab/financeTab) vivia na URL. `replaceState`
+   em vez de mudar `location.hash` direto porque trocar de aba não
+   deve empilhar uma entrada nova no histórico do navegador a cada
+   clique — só a URL atual precisa refletir onde a pessoa está. */
+function currentRoute(){
+  if (state.page !== 'admin') return '';
+  var parts = ['admin', state.adminTab];
+  if (state.adminTab === 'financeiro') parts.push(state.financeTab);
+  return parts.join('/');
+}
+function syncRoute(){
+  var route = currentRoute();
+  var hash = route ? '#' + route : '';
+  if ((location.hash || '') !== hash){
+    history.replaceState(null, '', location.pathname + location.search + hash);
+  }
+}
+function applyRouteFromHash(){
+  var h = (location.hash || '').replace(/^#/, '');
+  if (!h) return;
+  var parts = h.split('/');
+  if (parts[0] !== 'admin') return;
+  state.page = 'admin';
+  if (parts[1]) state.adminTab = parts[1];
+  if (parts[1] === 'financeiro' && parts[2]) state.financeTab = parts[2];
+}
 function go(page){
   state.page = page; state.menuOpen = false; state.authError = '';
+  syncRoute();
   render();
   window.scrollTo({ top:0 });
 }
@@ -3537,8 +3657,8 @@ document.addEventListener('click', function(e){
   else if (action === 'toggleTheme') { state.theme = state.theme === 'dark' ? 'light' : 'dark'; applyTheme(state.theme); render(); }
   else if (action === 'toggleMenu') { state.menuOpen = !state.menuOpen; render(); }
   else if (action === 'closeMenu') { state.menuOpen = false; render(); }
-  else if (action === 'adminTab') { state.adminTab = el.dataset.tab; render(); window.scrollTo({ top:0, behavior:'smooth' }); }
-  else if (action === 'financeTab') { state.financeTab = el.dataset.ftab; render(); }
+  else if (action === 'adminTab') { state.adminTab = el.dataset.tab; syncRoute(); render(); window.scrollTo({ top:0, behavior:'smooth' }); }
+  else if (action === 'financeTab') { state.financeTab = el.dataset.ftab; syncRoute(); render(); }
   else if (action === 'logout') { if (fbAuth) fbAuth.signOut(); }
   else if (action === 'pickAgendaDay') { state.agendaDate = el.dataset.date; render(); }
 
@@ -3794,21 +3914,28 @@ document.addEventListener('click', function(e){
   }
 
   /* ---- perdas ---- */
-  else if (action === 'toggleAddLoss') { state.addingLoss = !state.addingLoss; render(); }
+  else if (action === 'toggleAddLoss') {
+    if (state.addingLoss) { state.addingLoss = false; state.lossDraft = null; }
+    else {
+      var lossProds = state.products.filter(function(p){ return !isHidden(p) && ensureRecipe(p).ingredientUsage.length > 0; });
+      state.addingLoss = true;
+      state.lossDraft = makeLossDraft(lossProds.length ? lossProds[0].id : '');
+    }
+    render();
+  }
   else if (action === 'createLossEvent') {
-    var lpProd = document.getElementById('lp-produto').value;
-    var lpBatches = Number(document.getElementById('lp-fornadas').value) || 0;
-    if (!lpProd || lpBatches <= 0) { toast('Escolha o doce e a quantidade de fornadas.', 'err'); return; }
+    var d = state.lossDraft;
+    var batches = Number(d.batches) || 0;
+    if (!d.productId || batches <= 0) { toast('Escolha o doce e a quantidade de fornadas.', 'err'); return; }
     var newLoss = {
-      id: 'loss'+Date.now(), productId: lpProd, batches: lpBatches,
-      date: document.getElementById('lp-data').value || todayStr(),
-      note: (document.getElementById('lp-nota').value||'').trim(),
-      includeLabor: document.getElementById('lp-mao').checked,
-      includePackaging: document.getElementById('lp-emb').checked
+      id: 'loss'+Date.now(), productId: d.productId, batches: batches,
+      date: d.date || todayStr(), note: (d.note||'').trim(),
+      includeLabor: d.includeLabor, includePackaging: d.includePackaging,
+      lostIngredientIds: d.lostIngredientIds.slice()
     };
     state.lossEvents.unshift(newLoss);
     dbSet('lossEvents/'+newLoss.id, newLoss);
-    state.addingLoss = false; render(); toast('Perda registrada.', 'ok');
+    state.addingLoss = false; state.lossDraft = null; render(); toast('Perda registrada.', 'ok');
   }
   else if (action === 'removeLossEvent') {
     askConfirm('Excluir este registro de perda?', 'Não afeta o estoque nem os pedidos — só o histórico de prejuízo.', 'Excluir', true, 'deleteLossEvent', el.dataset.id);
@@ -3878,6 +4005,15 @@ document.addEventListener('click', function(e){
     render();
   }
   else if (action === 'selectAllHistory') { state.historySelectedKeys = null; render(); }
+  else if (action === 'toggleHistoryItem') {
+    var hKey = el.dataset.key;
+    var hAll = priceHistoryItems().map(function(x){ return x.kind+':'+x.id; });
+    var hCur = state.historySelectedKeys ? state.historySelectedKeys.slice() : hAll.slice();
+    var hIdx = hCur.indexOf(hKey);
+    if (hIdx === -1) hCur.push(hKey); else hCur.splice(hIdx, 1);
+    state.historySelectedKeys = hCur;
+    render();
+  }
 });
 
 /* =========================================================
@@ -3932,6 +4068,7 @@ document.addEventListener('input', function(e){
     debouncedRender();
     return;
   }
+  if (action === 'setLossDraftBatches'){ state.lossDraft.batches = el.value; debouncedRender(); return; }
 });
 
 /* =========================================================
@@ -4034,16 +4171,6 @@ document.addEventListener('change', function(e){
     }
     render();
   }
-  else if (action === 'toggleHistoryItem') {
-    var hKey = el.dataset.key;
-    var hAll = priceHistoryItems().map(function(x){ return x.kind+':'+x.id; });
-    var hCur = state.historySelectedKeys ? state.historySelectedKeys.slice() : hAll.slice();
-    var hIdx = hCur.indexOf(hKey);
-    if (el.checked && hIdx === -1) hCur.push(hKey);
-    else if (!el.checked && hIdx !== -1) hCur.splice(hIdx, 1);
-    state.historySelectedKeys = hCur;
-    render();
-  }
 
   /* receitas */
   else if (action === 'setRecipeYield') { var ry = getProduct(el.dataset.id); if (ry) { var r1 = ensureRecipe(ry); r1.yieldQty = Number(el.value) || 1; dbSet('products/'+ry.id+'/recipe', r1); } render(); }
@@ -4066,6 +4193,24 @@ document.addEventListener('change', function(e){
   else if (action === 'setPlanQty') { state.planQty[el.dataset.id] = Number(el.value) || 0; render(); }
   else if (action === 'setConsumptionRate') { state.consumptionRate[el.dataset.id] = Math.max(0, Number(el.value) || 0); render(); }
   else if (action === 'setRestockPacks') { state.restockPacks[el.dataset.key] = Math.max(1, Math.floor(Number(el.value) || 1)); render(); }
+
+  /* perdas */
+  else if (action === 'setLossDraftProduct') {
+    var newP = getProduct(el.value);
+    state.lossDraft.productId = el.value;
+    state.lossDraft.lostIngredientIds = allRecipeIngredientIds(newP);
+    render();
+  }
+  else if (action === 'toggleLossDraftIngredient') {
+    var liIdx = state.lossDraft.lostIngredientIds.indexOf(el.dataset.ingid);
+    if (liIdx === -1) state.lossDraft.lostIngredientIds.push(el.dataset.ingid);
+    else state.lossDraft.lostIngredientIds.splice(liIdx, 1);
+    render();
+  }
+  else if (action === 'toggleLossDraftLabor') { state.lossDraft.includeLabor = el.checked; render(); }
+  else if (action === 'toggleLossDraftPackaging') { state.lossDraft.includePackaging = el.checked; render(); }
+  else if (action === 'setLossDraftDate') { state.lossDraft.date = el.value; render(); }
+  else if (action === 'setLossDraftNote') { state.lossDraft.note = el.value; }
 });
 
 /* =========================================================
@@ -4216,6 +4361,7 @@ function minuteTick(){
 
 initTheme();
 loadCart();
+applyRouteFromHash();
 syncScrollState();
 upgradeBrandAssets();
 initFirebaseSync();
