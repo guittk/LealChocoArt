@@ -1,22 +1,24 @@
 rules_version = '2';
 
 // ================================================================
-// Firestore COMPARTILHADO entre 3 apps no mesmo projeto Firebase
-// (fb-general-stores): Ápice (apice_*), LealChocoArt (lealchocoart_*)
-// e CentroComercial (centrocomercial_*). Um único banco, sem
-// isolamento por projeto — cada app já prefixa suas próprias
-// coleções para nunca colidir por nome.
+// Firestore COMPARTILHADO entre 5 apps no mesmo projeto Firebase
+// (fb-general-stores): Ápice (apice_*), LealChocoArt (lealchocoart_*),
+// CentroComercial (centrocomercial_*), Ellen Cavalcanti (ellen_*) e
+// ARC Personalizados (arc_*). Um único banco, sem isolamento por
+// projeto — cada app já prefixa suas próprias coleções para nunca
+// colidir por nome, e cada bloco declara só funções com nomes
+// prefixados pra não colidir entre si.
 //
-// Este arquivo é IDÊNTICO nos três repositórios (Apice/firestore.rules,
-// LealChocoArt/firestore.rules, CentroComercial/firestore.rules) de
-// propósito: um `firebase deploy --only firestore:rules` substitui o
-// ruleset do projeto INTEIRO, não só as regras de quem está fazendo
-// o deploy — se cada app deployasse só as suas próprias regras, o
-// deploy de um apagaria o acesso dos outros dois (foi exatamente o
-// bug que motivou unificar num arquivo só).
+// Este arquivo é IDÊNTICO nos repositórios (Apice/firestore.rules,
+// LealChocoArt/firestore.rules, CentroComercial/firestore.rules,
+// Ellen/firestore.rules, Arc/firestore.rules) de propósito: um `firebase deploy --only
+// firestore:rules` substitui o ruleset do projeto INTEIRO, não só as
+// regras de quem está fazendo o deploy — se cada app deployasse só
+// as suas próprias regras, o deploy de um apagaria o acesso dos
+// outros (foi exatamente o bug que motivou unificar num arquivo só).
 //
 // Ao editar: sempre mude aqui E replique a mesma edição nos outros
-// dois repos antes de fazer deploy de qualquer um deles.
+// repos antes de fazer deploy de qualquer um deles.
 // ================================================================
 
 service cloud.firestore {
@@ -292,6 +294,176 @@ service cloud.firestore {
     match /centrocomercial_webhookLogs/{id} {
       allow read: if request.auth != null;
       allow write: if false;
+    }
+
+    // ============================================================
+    // Ellen Cavalcanti — consultoria, RH, mentoria e treinamentos.
+    // Modelo: owner (a Ellen) tem acesso total; manager (equipe) pode
+    // ter a visão restrita a um subconjunto de projetos/empresas;
+    // client acessa só os próprios projetos, direto ou via empresa
+    // (companyId). Espelha o padrão já usado no projeto da Trovalim
+    // Consultoria (geovana-trovalim-prod), com nomes de função
+    // prefixados `ellen` para não colidir com os de outros apps.
+    // ============================================================
+
+    function ellenAccount() {
+      return get(/databases/$(database)/documents/ellen_users/$(request.auth.uid)).data;
+    }
+
+    function ellenCompanyId() {
+      return isSignedIn() ? ellenAccount().get('companyId', null) : null;
+    }
+
+    function ellenIsOwner() {
+      return isSignedIn() && ellenAccount().role == 'owner';
+    }
+
+    function ellenIsManager() {
+      return isSignedIn() && ellenAccount().role == 'manager';
+    }
+
+    function ellenIsStaff() {
+      return ellenIsOwner() || ellenIsManager();
+    }
+
+    function ellenManagerCanAccessProject(projectId) {
+      let acc = ellenAccount();
+      return !('projectAccess' in acc) || acc.projectAccess == null || (projectId in acc.projectAccess);
+    }
+
+    function ellenManagerCanAccessCompany(companyId) {
+      let acc = ellenAccount();
+      return !('companyAccess' in acc) || acc.companyAccess == null || (companyId in acc.companyAccess);
+    }
+
+    function ellenCanAccessProject(projectId) {
+      return ellenIsOwner() || (ellenIsManager() && ellenManagerCanAccessProject(projectId));
+    }
+
+    // Um cliente pode ser o dono direto do projeto (ownerId == seu uid) ou um
+    // colaborador de uma empresa-cliente (seu companyId == ownerId do
+    // projeto). Projetos "hidden" ficam invisíveis pro cliente, mesmo sendo o dono.
+    function ellenIsProjectOwner(projectId) {
+      let project = get(/databases/$(database)/documents/ellen_projects/$(projectId)).data;
+      return isSignedIn() && !project.get('hidden', false) &&
+        (project.ownerId == request.auth.uid || project.ownerId == ellenCompanyId());
+    }
+
+    // Users: owner lê todos; manager lê contas staff e contas client cuja
+    // companyId esteja em companyAccess (sem companyAccess = todas); um
+    // usuário lê o próprio doc. Criar/excluir conta, mudar role/
+    // projectAccess/companyAccess: só owner.
+    match /ellen_users/{userId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == userId ||
+        ellenIsOwner() ||
+        (ellenIsManager() && (
+          resource.data.get('role', '') in ['owner', 'manager'] ||
+          ellenManagerCanAccessCompany(resource.data.get('companyId', null))
+        ))
+      );
+      allow create, delete: if ellenIsOwner();
+      allow update: if ellenIsOwner() || (
+        ellenIsStaff() &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'projectAccess', 'companyAccess', 'hiddenTabs'])
+      );
+    }
+
+    // Empresas-cliente: staff tem acesso (manager restrito a companyAccess se
+    // definido); um colaborador (companyId aponta pra cá) só lê a própria
+    // empresa. Criar/excluir: só owner.
+    match /ellen_empresas/{empresaId} {
+      allow read: if isSignedIn() && (
+        ellenIsOwner() || (ellenIsManager() && ellenManagerCanAccessCompany(empresaId)) || ellenCompanyId() == empresaId
+      );
+      allow create, delete: if ellenIsOwner();
+      allow update: if ellenIsStaff();
+    }
+
+    // Projetos: staff tem acesso (manager restrito a projectAccess se
+    // definido); o cliente dono (direto ou via empresa) lê o próprio,
+    // exceto se marcado "hidden".
+    match /ellen_projects/{projectId} {
+      allow read, write: if ellenCanAccessProject(projectId);
+      allow read: if isSignedIn() && !resource.data.get('hidden', false) && (
+        resource.data.ownerId == request.auth.uid || resource.data.ownerId == ellenCompanyId()
+      );
+
+      match /messages/{msgId} {
+        allow read, create: if ellenCanAccessProject(projectId) || ellenIsProjectOwner(projectId);
+        allow update, delete: if ellenCanAccessProject(projectId);
+      }
+
+      // Exclusão: staff exclui qualquer arquivo; o cliente dono só pode
+      // excluir os que ele mesmo enviou (uploadedByRole == 'client').
+      match /files/{fileId} {
+        allow read, create: if ellenCanAccessProject(projectId) || ellenIsProjectOwner(projectId);
+        allow delete: if ellenCanAccessProject(projectId) ||
+          (ellenIsProjectOwner(projectId) && resource.data.uploadedByRole == 'client');
+        allow update: if ellenCanAccessProject(projectId);
+      }
+    }
+
+    // Envios do formulário de contato do site público: qualquer visitante
+    // (sem login) pode criar; leitura só para a equipe.
+    match /ellen_contactSubmissions/{id} {
+      allow create: if true;
+      allow read, delete: if ellenIsStaff();
+    }
+
+    // Configurações da plataforma (cor, status de projeto, cotas de
+    // armazenamento) — leitura liberada pra qualquer usuário autenticado da
+    // Ellen (formulários e badges precisam renderizar pro cliente também),
+    // escrita só pra staff.
+    match /ellen_settings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if ellenIsStaff();
+    }
+
+    // Notas internas do projeto — subcoleção separada do doc principal (que
+    // o cliente dono lê) para nunca vazar conteúdo staff-only.
+    match /ellen_projects/{projectId}/internal/{docId} {
+      allow read, write: if ellenCanAccessProject(projectId);
+    }
+
+    // Quadro Kanban interno da equipe — nunca visível para clientes.
+    match /ellen_tasks/{taskId} {
+      allow read, write: if ellenIsStaff();
+    }
+
+    // Cadastro de mentorandos e acompanhamento de progresso — uso interno da
+    // equipe, nunca visível para clientes.
+    match /ellen_mentees/{menteeId} {
+      allow read, write: if ellenIsStaff();
+    }
+
+    // ============================================================
+    // ARC Personalizados
+    // ============================================================
+
+    // Catálogo (categorias, cada uma já carregando o produto
+    // representativo e suas fotos) e depoimentos: conteúdo público
+    // do site, gerenciado só pelo painel admin autenticado.
+    match /arc_categorias/{id} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    match /arc_depoimentos/{id} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    // Documento único (`settings`) com toggles de visibilidade das
+    // seções do site e as fotos do hero.
+    match /arc_siteConfig/{id} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    // Pedidos de orçamento: visitante anônimo cria pelo modal público
+    // (contém telefone/nome, por isso não é público pra leitura);
+    // só o painel admin autenticado lê, avança status ou exclui.
+    match /arc_orcamentos/{id} {
+      allow read, update, delete: if request.auth != null;
+      allow create: if true;
     }
 
     // Deny everything else by default.
