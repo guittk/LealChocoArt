@@ -81,6 +81,7 @@ function icon(name, size, color){
     lock:'<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
     edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>',
+    grip:'<circle cx="9" cy="6" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="15" cy="6" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="9" cy="12" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="15" cy="12" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="9" cy="18" r="1.4" style="fill:currentColor;stroke:none"/><circle cx="15" cy="18" r="1.4" style="fill:currentColor;stroke:none"/>',
     camera:'<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
     calendar:'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
     chart:'<line x1="4" y1="20" x2="4" y2="12"/><line x1="10" y1="20" x2="10" y2="7"/><line x1="16" y1="20" x2="16" y2="4"/><line x1="2" y1="21" x2="22" y2="21"/>',
@@ -260,6 +261,19 @@ function publicLocations(){ return state.locations.filter(function(l){ return !i
 function getProduct(id){ return state.products.find(function(x){ return x.id === id; }); }
 function getIngredient(id){ return state.ingredients.find(function(x){ return x.id === id; }); }
 function getPackagingItem(id){ return state.packagingItems.find(function(x){ return x.id === id; }); }
+/* A ordem da lista de insumos é escolhida a mão (arrastando) e mora no
+   campo `order` do documento. Firestore devolve os docs sem ordem útil,
+   então TODA leitura precisa reordenar. Item sem `order` (cadastrado
+   antes deste campo existir) vai pro fim, em ordem alfabética, em vez
+   de embaralhar a lista inteira. */
+function sortByOrder(arr){
+  return arr.slice().sort(function(a,b){
+    var ao = (a.order === undefined || a.order === null) ? Infinity : Number(a.order);
+    var bo = (b.order === undefined || b.order === null) ? Infinity : Number(b.order);
+    if (ao !== bo) return ao - bo;
+    return String(a.name||'').localeCompare(String(b.name||''));
+  });
+}
 function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
 function round1(v){ return Math.round((Number(v)||0) * 10) / 10; }
 /* "0,5 un" lê melhor que "1 un" arredondado para cima quando a meta
@@ -721,7 +735,10 @@ function computeSingleProductProjection(){
    comprados — que é o que sai do bolso de verdade. */
 function planQtyFor(p){
   var v = state.planQty[p.id];
-  return (v === undefined || v === null || v === '') ? 0 : Math.max(0, Number(v) || 0);
+  /* nada preenchido = uma fornada da receita, que é a menor unidade de
+     produção real (não dá pra fazer "meia receita" de pão de mel) */
+  if (v === undefined || v === null || v === '') return recipeYieldPackages(p);
+  return Math.max(0, Number(v) || 0);
 }
 function computeShoppingList(){
   var needIng = {}, needPack = {};
@@ -789,7 +806,6 @@ function computeShoppingList(){
    reais dos últimos 30 dias, e a Julia pode ajustar na mão.
 ========================================================= */
 var RESTOCK_DAYS = 91;   /* ~3 meses */
-var CASHFLOW_DAYS = 30;  /* horizonte da simulação de caixa: 1 mês */
 
 /* unidades vendidas por dia, por produto, medidas no histórico real */
 function measuredDailyRate(){
@@ -810,12 +826,24 @@ function measuredDailyRate(){
   Object.keys(totals).forEach(function(pid){ rate[pid] = totals[pid] / 30; });
   return rate;
 }
-/* ritmo em uso: o que foi digitado vence a medição */
+/* quantas embalagens vendáveis UMA fornada da receita rende — é o
+   número que a Julia pensa naturalmente ("faço uma receita de pão de
+   mel e saem 16"), por isso serve de padrão tanto pro ritmo de venda
+   quanto pro planejamento de compras quando não há nada preenchido. */
+function recipeYieldPackages(p){
+  var r = ensureRecipe(p);
+  var yieldQty = Number(r.yieldQty) || 1;
+  var unitsPerPackage = Number(r.unitsPerPackage) || 1;
+  return Math.max(1, Math.floor(yieldQty / unitsPerPackage));
+}
+/* ritmo em uso: o que foi digitado vence a medição, e a medição vence
+   o padrão (o rendimento de uma receita) */
 function dailyRateFor(p){
   var manual = state.consumptionRate[p.id];
   if (manual !== undefined && manual !== null && manual !== '') return Math.max(0, Number(manual) || 0);
   var m = measuredDailyRate();
-  return m[p.id] || 0;
+  if (m[p.id] > 0) return m[p.id];
+  return recipeYieldPackages(p);
 }
 function itemKey(kind, id){ return kind + ':' + id; }
 function packsPerBuy(kind, id){
@@ -974,120 +1002,23 @@ function restockGantt(plan){
 }
 
 /* Ritmo de venda (un/dia por doce) é um único número compartilhado —
-   alimenta a reposição de estoque (aqui embaixo), a projeção de lucro
-   em Metas e a simulação de caixa. Um só card editável em vez de três
-   cópias, senão a pessoa muda num lugar e esquece que os outros dois
-   ficaram desatualizados. */
+   alimenta a reposição de estoque e o planejamento. Um só card
+   editável em vez de várias cópias, senão a pessoa muda num lugar e
+   esquece que os outros ficaram desatualizados. */
 function dailyRateCard(){
   var products = state.products.filter(function(p){ return !isHidden(p); });
   var measured = measuredDailyRate();
   return '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('chart',18,'var(--brand)')+'<h3 style="flex:1">Ritmo de venda</h3>' +
       '<button class="btn-ghost" data-action="resetRate">'+icon('refresh',13)+' Usar as vendas reais</button></div>' +
-    '<p class="hint" style="margin:-10px 0 16px">Quantas unidades de cada doce você vende por dia. Já vem preenchido com a média dos últimos 30 dias — ajuste se quiser simular outro cenário. Esse número também é usado em Reposição e na simulação de caixa.</p>' +
+    '<p class="hint" style="margin:-10px 0 16px">Quantas unidades de cada doce você vende por dia. Vem preenchido com a média dos últimos 30 dias e, sem venda registrada, com o rendimento de uma receita — ajuste se quiser simular outro cenário.</p>' +
     '<div class="fin-grid-3">' + products.map(function(p){
       var m = measured[p.id] || 0;
       return '<div class="field" style="margin:0"><label for="cr-'+p.id+'">'+esc(p.name)+' (un/dia)</label>' +
         '<input class="input sm" id="cr-'+p.id+'" type="number" inputmode="decimal" min="0" step="0.1" value="'+round1(dailyRateFor(p))+'" data-action="setConsumptionRate" data-id="'+p.id+'">' +
-        '<p class="hint" style="margin-top:4px">'+(m > 0 ? 'medido: '+num(m,1)+'/dia' : 'sem venda registrada nos últimos 30 dias')+'</p></div>';
+        '<p class="hint" style="margin-top:4px">'+(m > 0 ? 'medido: '+num(m,1)+'/dia' : 'padrão: '+recipeYieldPackages(p)+' un (uma receita)')+'</p></div>';
     }).join('') + '</div>' +
   '</div>';
-}
-/* =========================================================
-   SIMULAÇÃO DE CAIXA
-   "Vendendo nesse ritmo, dia a dia, quando eu preciso desembolsar pra
-   comprar de novo?" Junta o lucro constante das vendas (ritmo × lucro
-   por unidade) com os picos de gasto do plano de reposição (mesmas
-   compras do Gantt acima) — o resultado é o saldo acumulado, que sobe
-   todo dia com a venda e cai de repente no dia de cada compra.
-========================================================= */
-function computeCashFlowSimulation(plan){
-  var products = state.products.filter(function(p){ return !isHidden(p); });
-  var dailyRevenue = 0, dailyMaterialCost = 0;
-  products.forEach(function(p){
-    var rate = dailyRateFor(p);
-    if (rate <= 0) return;
-    var c = recipeCosts(p);
-    dailyRevenue += rate * c.sellPrice;
-    dailyMaterialCost += rate * c.materialPerPackage;
-  });
-  var dailyProfit = dailyRevenue - dailyMaterialCost;
-
-  var restockByDay = {};
-  plan.rows.forEach(function(r){
-    r.purchases.forEach(function(pu){
-      var day = Math.round(pu.start);
-      restockByDay[day] = (restockByDay[day] || 0) + r.packs * r.packPrice;
-    });
-  });
-
-  var days = [], cash = 0, cashNoRestock = 0, worst = null;
-  for (var t = 0; t < CASHFLOW_DAYS; t++){
-    var restock = restockByDay[t] || 0;
-    cash += dailyProfit - restock;
-    cashNoRestock += dailyProfit;
-    var point = { day:t, restock:restock, cash:cash, cashNoRestock:cashNoRestock };
-    days.push(point);
-    if (restock > 0 && (!worst || cash < worst.cash)) worst = point;
-  }
-  return {
-    dailyRevenue:dailyRevenue, dailyMaterialCost:dailyMaterialCost, dailyProfit:dailyProfit,
-    days:days, worst:worst, finalCash: cash, finalCashNoRestock: cashNoRestock,
-    totalRestock: cashNoRestock - cash
-  };
-}
-function cashFlowChart(sim){
-  var days = sim.days;
-  var n = days.length;
-  var cashVals = days.map(function(d){ return d.cash; }).concat(days.map(function(d){ return d.cashNoRestock; })).concat([0]);
-  var minV = Math.min.apply(null, cashVals), maxV = Math.max.apply(null, cashVals);
-  if (minV === maxV){ minV -= 1; maxV += 1; }
-
-  var W = 900, H = 260, padX = 60, padY = 24;
-  function xAt(i){ return padX + (n===1 ? (W-padX*2)/2 : (i/(n-1))*(W-padX*2)); }
-  function yFor(v){ return H - padY - ((v-minV)/(maxV-minV))*(H-padY*2); }
-
-  var grid = '';
-  for (var g = 0; g <= 4; g++){
-    var yy = padY + (g/4)*(H-padY*2);
-    var val = maxV - (g/4)*(maxV-minV);
-    grid += '<line x1="'+padX+'" y1="'+yy.toFixed(1)+'" x2="'+(W-padX)+'" y2="'+yy.toFixed(1)+'" stroke="var(--line)" stroke-width="1"/>' +
-      '<text x="'+(padX-9)+'" y="'+(yy+4).toFixed(1)+'" text-anchor="end" font-size="10.5" fill="var(--ink-3)">'+currency(val).replace('R$','').trim()+'</text>';
-  }
-  /* linha do zero em destaque — abaixo dela o caixa ficou negativo */
-  if (minV < 0 && maxV > 0){
-    var zy = yFor(0);
-    grid += '<line x1="'+padX+'" y1="'+zy.toFixed(1)+'" x2="'+(W-padX)+'" y2="'+zy.toFixed(1)+'" stroke="var(--ink-3)" stroke-width="1" stroke-dasharray="3 3"/>';
-  }
-
-  function pathFor(key){
-    var d = '';
-    days.forEach(function(pt, i){
-      d += (i===0 ? 'M' : 'L') + xAt(i).toFixed(1) + ' ' + yFor(pt[key]).toFixed(1) + ' ';
-    });
-    return d.trim();
-  }
-  var lineGross = '<path class="chart-line" d="'+pathFor('cashNoRestock')+'" fill="none" stroke="var(--ink-3)" stroke-width="2" stroke-dasharray="5 4" stroke-linecap="round" pathLength="1"/>';
-  var lineCash = '<path class="chart-line" d="'+pathFor('cash')+'" fill="none" stroke="var(--brand)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" pathLength="1"/>';
-
-  var dots = days.filter(function(d){ return d.restock > 0; }).map(function(d){
-    return '<circle cx="'+xAt(d.day).toFixed(1)+'" cy="'+yFor(d.cash).toFixed(1)+'" r="3.6" fill="var(--danger)"><title>'+shortDate(dayOffsetToDate(d.day))+' · compra de '+currency(d.restock)+'</title></circle>';
-  }).join('');
-
-  var maxLabels = 8;
-  var step = Math.max(1, Math.ceil(n / maxLabels));
-  var labels = '';
-  for (var i = 0; i < n; i += step){
-    labels += '<text x="'+xAt(i).toFixed(1)+'" y="'+(H-6)+'" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">'+shortDate(dayOffsetToDate(i))+'</text>';
-  }
-
-  return '<div style="overflow-x:auto"><svg viewBox="0 0 '+W+' '+H+'" style="width:100%;min-width:640px;height:auto" role="img" aria-label="Simulação de lucro e caixa dia a dia">' +
-    grid + lineGross + lineCash + dots + labels + '</svg></div>' +
-    '<div class="legend">' +
-      '<span><i style="background:var(--ink-3)"></i> lucro acumulado (sem contar compra de insumo)</span>' +
-      '<span><i style="background:var(--brand)"></i> caixa real (descontando as compras)</span>' +
-      '<span><i style="background:var(--danger)"></i> dia de comprar de novo</span>' +
-    '</div>';
 }
 function pageFinanceReposicao(){
   var products = state.products.filter(function(p){ return !isHidden(p); });
@@ -1114,18 +1045,6 @@ function pageFinanceReposicao(){
     statTile('Acaba primeiro', esc(plan.rows[0].item.name), 'alert', 'neg', (plan.rows[0].kind==='packaging'?'embalagem · ':'ingrediente · ')+'em '+Math.round(plan.rows[0].cycleDays)+' dias · '+shortDate(dayOffsetToDate(plan.rows[0].cycleDays))) +
     statTile('Dura mais', esc(plan.rows[plan.rows.length-1].item.name), 'check', 'pos', (plan.rows[plan.rows.length-1].kind==='packaging'?'embalagem · ':'ingrediente · ')+Math.round(plan.rows[plan.rows.length-1].cycleDays)+' dias') +
   '</div>';
-
-  /* Se "Compra de hoje" parecer baixo demais, é quase sempre porque um
-     insumo cadastrado (às vezes uma embalagem) não entrou na conta —
-     e isso só acontece por um destes dois motivos, nunca por a conta
-     "esquecer" de embalagem. Deixar isso explícito aqui evita o
-     usuário achar que o cálculo está quebrado. */
-  var idleWithPrice = plan.idle.filter(function(r){ return Number(r.item.packagePrice) > 0; });
-  var idleBanner = idleWithPrice.length
-    ? '<div class="banner banner-warn">'+icon('alert',16)+'<span><b>'+idleWithPrice.length+' item(ns) cadastrado(s) de fora desta conta:</b> ' +
-        esc(idleWithPrice.map(function(r){ return r.item.name + (r.kind==='packaging'?' (embalagem)':' (ingrediente)'); }).join(', ')) +
-        '. Isso acontece quando o item não está em <b>nenhuma receita</b> (Financeiro → Receitas → "Embalagem por unidade vendida"/ingredientes), ou quando o(s) doce(s) que o usam têm <b>ritmo de venda zerado</b> no card abaixo.</span></div>'
-    : '';
 
   var chart = '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('calendar',18,'var(--brand)')+'<h3 style="flex:1">Quando cada insumo acaba</h3>' +
@@ -1157,20 +1076,7 @@ function pageFinanceReposicao(){
       : '') +
   '</div>';
 
-  var sim = computeCashFlowSimulation(plan);
-  var simTiles = '<div class="stat-grid">' +
-    statTile('Lucro por dia', currency(sim.dailyProfit), 'sun', sim.dailyProfit>0?'pos':'neg', 'vendendo no ritmo de cima') +
-    statTile('Gasto com reposição no mês', currency(sim.totalRestock), 'cart', 'neg') +
-    statTile('Saldo em 30 dias', currency(sim.finalCash), 'wallet', sim.finalCash>=0?'pos':'neg', 'lucro das vendas menos as compras') +
-    (sim.worst ? statTile('Caixa mais apertado', currency(sim.worst.cash), 'alert', sim.worst.cash<0?'neg':'', shortDate(dayOffsetToDate(sim.worst.day))) : '') +
-  '</div>';
-  var simChart = '<div class="admin-card">' +
-    '<div class="admin-card-head">'+icon('chart',18,'var(--brand)')+'<h3 style="flex:1">Simulação de lucro e caixa</h3>' +
-      '<span class="pill pill-lilac">próximos 30 dias</span></div>' +
-    '<p class="hint" style="margin-top:-8px">Pra que serve: vendendo no ritmo configurado acima, mostra dia a dia o lucro que vai entrando e onde ele cai de repente porque um insumo acabou e precisou ser recomprado.</p>' +
-    cashFlowChart(sim) + '</div>';
-
-  return rateForm + tiles + idleBanner + chart + table + simTiles + simChart;
+  return rateForm + tiles + chart + table;
 }
 
 /* =========================================================
@@ -1193,8 +1099,8 @@ function attachAuthGatedSync(){
     reconcileStock();
     render();
   }));
-  authGatedUnsubs.push(syncCollection('ingredients', function(val){ state.ingredients = objToArray(val); render(); }));
-  authGatedUnsubs.push(syncCollection('packagingItems', function(val){ state.packagingItems = objToArray(val); render(); }));
+  authGatedUnsubs.push(syncCollection('ingredients', function(val){ state.ingredients = sortByOrder(objToArray(val)); render(); }));
+  authGatedUnsubs.push(syncCollection('packagingItems', function(val){ state.packagingItems = sortByOrder(objToArray(val)); render(); }));
   authGatedUnsubs.push(syncCollection('lossEvents', function(val){
     state.lossEvents = objToArray(val).sort(function(a,b){ return b.date < a.date ? -1 : (b.date > a.date ? 1 : 0); });
     render();
@@ -2899,8 +2805,50 @@ function pageFinanceResumo(){
       '<p class="hint" style="margin:-4px 0 14px">Pra que serve: ver de relance quais doces têm gordura pra cortar no preço e quais já estão no talo.</p>' + bars) + '</div>';
 }
 
+/* =========================================================
+   REORDENAR ARRASTANDO
+   `draggable` fica só na alcinha, não na linha inteira: a linha é
+   cheia de <input>, e torná-la arrastável sequestraria a seleção de
+   texto dentro deles. As classes de feedback (.drag-over etc.) são
+   adicionadas por JS, então precisam ser limpas ANTES de render() —
+   a reconciliação do DOM as removeria de qualquer jeito.
+========================================================= */
+function dragHandle(label){
+  return '<span class="drag-handle" data-draghandle draggable="true" role="button" tabindex="-1" aria-label="'+label+'" title="Arraste para reordenar">'+icon('grip',15)+'</span>';
+}
+function dragHint(){
+  return '<p class="hint" style="margin:-6px 0 12px">'+icon('grip',12)+' Arraste pela alcinha para mudar a ordem da lista.</p>';
+}
+/* Grava a nova ordem em todos os itens que mudaram de posição. Só quem
+   mudou vai pro Firestore — reescrever a lista inteira a cada arrasto
+   geraria dezenas de escritas por um movimento só. */
+function reorderInsumos(kind, from, to){
+  var isIng = kind === 'ingredient';
+  var list = isIng ? state.ingredients : state.packagingItems;
+  if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return;
+  list.splice(to, 0, list.splice(from, 1)[0]);
+  var collection = isIng ? 'ingredients' : 'packagingItems';
+  list.forEach(function(it, i){
+    if (Number(it.order) !== i){ it.order = i; dbSet(collection+'/'+it.id+'/order', i); }
+  });
+}
+function reorderRecipeUsage(productId, kind, from, to){
+  var p = getProduct(productId); if (!p) return;
+  var r = ensureRecipe(p);
+  var arr = kind === 'ingredient' ? r.ingredientUsage : r.packagingUsage;
+  if (from === to || from < 0 || to < 0 || from >= arr.length || to >= arr.length) return;
+  arr.splice(to, 0, arr.splice(from, 1)[0]);
+  dbSet('products/'+p.id+'/recipe', r);
+}
+function applyDragReorder(zone, from, to){
+  if (zone === 'ing') return reorderInsumos('ingredient', from, to);
+  if (zone === 'pack') return reorderInsumos('packaging', from, to);
+  if (zone.indexOf('rIng:') === 0) return reorderRecipeUsage(zone.slice(5), 'ingredient', from, to);
+  if (zone.indexOf('rPack:') === 0) return reorderRecipeUsage(zone.slice(6), 'packaging', from, to);
+}
+
 /* ---------- insumos ---------- */
-function itemRow(item, kind, shopRow){
+function itemRow(item, kind, shopRow, idx){
   var isIng = kind === 'ingredient';
   var attr = isIng ? 'data-ingid' : 'data-packid';
   var pre = isIng ? 'Ingredient' : 'Packaging';
@@ -2912,7 +2860,8 @@ function itemRow(item, kind, shopRow){
       '<span>Sobra <b>'+num(shopRow.leftover, shopRow.leftover % 1 === 0 ? 0 : 1)+' '+esc(shopRow.unit)+'</b> ('+currency(shopRow.leftoverValue)+')</span>' +
     '</div>';
   }
-  return '<div class="admin-row">' +
+  return '<div class="admin-row" data-dragzone="'+(isIng?'ing':'pack')+'" data-dragindex="'+idx+'">' +
+    dragHandle('Reordenar '+esc(item.name)) +
     labeledField('Nome', '<input class="input sm" value="'+esc(item.name)+'" data-action="set'+pre+'Name" '+attr+'="'+item.id+'" aria-label="Nome">', 'flex:1 1 160px') +
     labeledField('Unidade', '<select class="input sm" style="width:82px" data-action="set'+pre+'Unit" '+attr+'="'+item.id+'" aria-label="Unidade">'+unitOptions(item.unit)+'</select>') +
     labeledField('Onde comprou', '<input class="input sm" style="width:130px" value="'+esc(item.store||'')+'" placeholder="Ex: Atacadão" data-action="set'+pre+'Store" '+attr+'="'+item.id+'" aria-label="Onde comprou">') +
@@ -2958,9 +2907,9 @@ function financeItemsTab(kind){
   }
 
   var rows = list.length
-    ? list.map(function(it){ return itemRow(it, kind, shopMap[it.id]); }).join('')
+    ? list.map(function(it, i){ return itemRow(it, kind, shopMap[it.id], i); }).join('')
     : '<p class="empty-note">Nenhuma '+title+' cadastrada.</p>';
-  return form + note + rows;
+  return form + note + (list.length > 1 ? dragHint() : '') + rows;
 }
 
 /* ---------- receitas ---------- */
@@ -2975,13 +2924,15 @@ function recipeUsageTable(p, rows, kind){
   var qtyAction = isIng ? 'setRecipeIngredientQty' : 'setRecipePackagingQty';
   var removeAction = isIng ? 'removeRecipeIngredient' : 'removeRecipePackaging';
   if (!rows.length) return '<p class="empty-note">Nada adicionado.</p>';
+  var zone = (isIng ? 'rIng:' : 'rPack:') + p.id;
   return '<div class="fin-usage-scroll">' +
-    '<div class="fin-usage-head"><span>'+(isIng?'Ingrediente':'Embalagem')+'</span><span>Qtd</span><span>Unid.</span><span>Custo unit.</span><span>Custo</span><span></span></div>' +
+    '<div class="fin-usage-head"><span></span><span>'+(isIng?'Ingrediente':'Embalagem')+'</span><span>Qtd</span><span>Unid.</span><span>Custo unit.</span><span>Custo</span><span></span></div>' +
     rows.map(function(u, idx){
       var item = getter(isIng ? u.ingredientId : u.packagingId);
       var unitCost = item ? itemUnitCost(item) : 0;
       var cost = unitCost * (Number(u.qty)||0);
-      return '<div class="fin-usage-row">' +
+      return '<div class="fin-usage-row" data-dragzone="'+zone+'" data-dragindex="'+idx+'">' +
+        dragHandle('Reordenar item da receita') +
         '<select class="input xs" data-action="'+setAction+'" data-id="'+p.id+'" data-idx="'+idx+'" aria-label="Item">'+usageOptions(kind, isIng?u.ingredientId:u.packagingId)+'</select>' +
         '<input class="input xs" type="number" inputmode="decimal" step="0.1" value="'+(u.qty||0)+'" data-action="'+qtyAction+'" data-id="'+p.id+'" data-idx="'+idx+'" aria-label="Quantidade">' +
         '<span style="font-size:12.5px;color:var(--ink-3);font-weight:700;align-self:center">'+esc(item?(item.unit||'un'):'—')+'</span>' +
@@ -3208,7 +3159,7 @@ function pageFinanceCompras(){
     '<p class="hint" style="margin:-10px 0 16px">Diga quantas embalagens vendidas de cada doce quer fazer. A conta mostra tudo que precisa ser comprado — <b>em potes inteiros</b>, que é como a loja vende.</p>' +
     '<div class="fin-grid-3">' + prods.map(function(p){
       return '<div class="field" style="margin:0"><label for="pl-'+p.id+'">'+esc(p.name)+'</label>' +
-        '<input class="input sm" id="pl-'+p.id+'" type="number" inputmode="numeric" min="0" step="1" value="'+(state.planQty[p.id]||0)+'" data-action="setPlanQty" data-id="'+p.id+'"></div>';
+        '<input class="input sm" id="pl-'+p.id+'" type="number" inputmode="numeric" min="0" step="1" value="'+planQtyFor(p)+'" data-action="setPlanQty" data-id="'+p.id+'"></div>';
     }).join('') + '</div>' +
   '</div>';
 
@@ -3225,7 +3176,6 @@ function pageFinanceCompras(){
     statTile('Só o que será usado', currency(s.totalProRata), 'scale', '', 'custo proporcional') +
     statTile('Fica de sobra', currency(s.leftoverValue), 'package', '', 'volta como estoque para a próxima') +
     statTile('Faturamento previsto', currency(s.revenue), 'coin', 'brand') +
-    statTile('Caixa depois da compra', currency(s.cashAfter), 'wallet', s.cashAfter >= 0 ? 'pos' : 'neg', 'faturamento − compra inteira') +
   '</div>';
 
   function tableFor(title, rows, iconName){
@@ -3258,9 +3208,6 @@ function pageFinanceCompras(){
         '<td class="n">'+currency(l.units * (Number(l.product.price)||0))+'</td></tr>';
     }).join('') + '</tbody></table></div></div>';
 
-  var note = '<div class="banner banner-info">'+icon('info',16)+
-    '<span>A diferença entre <b>'+currency(s.totalFull)+'</b> (comprando do zero) e <b>'+currency(s.totalProRata)+'</b> (só o que entra nos doces) é o que fica no armário para a próxima fornada: <b>'+currency(s.leftoverValue)+'</b>. Ela não é prejuízo — é estoque adiantado.</span></div>';
-
   function usageLeftoverChart(rows, title){
     if (!rows.length) return '';
     var bars = rows.map(function(r){
@@ -3279,7 +3226,7 @@ function pageFinanceCompras(){
     return '<div class="admin-card"><div class="admin-card-head">'+icon('scale',18,'var(--brand)')+'<h3 style="flex:1">'+title+'</h3></div>' + bars + '</div>';
   }
 
-  return planForm + tiles + note + plan +
+  return planForm + tiles + plan +
     tableFor('Ingredientes para comprar', s.ingRows, 'package') +
     usageLeftoverChart(s.ingRows, 'Quanto de cada ingrediente é usado x sobra') +
     tableFor('Embalagens para comprar', s.packRows, 'truck') +
@@ -4120,6 +4067,7 @@ document.addEventListener('click', function(e){
     var istore = (document.getElementById('ni-loja').value||'').trim();
     var iqty = Number(document.getElementById('ni-qtd').value) || 1;
     var newIng = { id:'ing'+Date.now(), name:iname, unit:document.getElementById('ni-unidade').value, store:istore,
+      order: state.ingredients.length,
       packagePrice:iprice, packageQty:iqty,
       priceHistory:[{ date:todayStr(), price:unitPriceValue({unit:document.getElementById('ni-unidade').value, packageQty:iqty}, iprice), store:istore, perUnit:true }] };
     state.ingredients.push(newIng);
@@ -4138,6 +4086,7 @@ document.addEventListener('click', function(e){
     var pkstore = (document.getElementById('np2-loja').value||'').trim();
     var pkqty = Number(document.getElementById('np2-qtd').value) || 1;
     var newPack = { id:'pack'+Date.now(), name:pkname, unit:document.getElementById('np2-unidade').value, store:pkstore,
+      order: state.packagingItems.length,
       packagePrice:pkprice, packageQty:pkqty,
       priceHistory:[{ date:todayStr(), price:unitPriceValue({unit:document.getElementById('np2-unidade').value, packageQty:pkqty}, pkprice), store:pkstore, perUnit:true }] };
     state.packagingItems.push(newPack);
@@ -4282,6 +4231,57 @@ document.addEventListener('click', function(e){
     render();
   }
 });
+
+/* =========================================================
+   EVENTOS — arrastar para reordenar
+========================================================= */
+var dragCtx = null;
+function dragRowFrom(target){
+  return (target && target.closest) ? target.closest('[data-dragzone]') : null;
+}
+function clearDragMarks(){
+  var marked = document.querySelectorAll('.drag-over, .drag-source');
+  for (var i = 0; i < marked.length; i++){ marked[i].classList.remove('drag-over', 'drag-source'); }
+}
+document.addEventListener('dragstart', function(e){
+  var handle = e.target.closest ? e.target.closest('[data-draghandle]') : null;
+  if (!handle) return;
+  var row = dragRowFrom(handle);
+  if (!row) return;
+  dragCtx = { zone: row.dataset.dragzone, from: Number(row.dataset.dragindex) };
+  row.classList.add('drag-source');
+  try {
+    e.dataTransfer.effectAllowed = 'move';
+    /* Firefox só inicia o arrasto se houver algum dado no dataTransfer */
+    e.dataTransfer.setData('text/plain', row.dataset.dragindex);
+    e.dataTransfer.setDragImage(row, 24, 20);
+  } catch(err){}
+});
+document.addEventListener('dragover', function(e){
+  if (!dragCtx) return;
+  var row = dragRowFrom(e.target);
+  /* só aceita soltar dentro da MESMA lista — arrastar um ingrediente
+     para dentro das embalagens não faria sentido nenhum */
+  if (!row || row.dataset.dragzone !== dragCtx.zone) return;
+  e.preventDefault();
+  try { e.dataTransfer.dropEffect = 'move'; } catch(err){}
+  if (!row.classList.contains('drag-over')){
+    clearDragMarks();
+    row.classList.add('drag-over');
+  }
+});
+document.addEventListener('drop', function(e){
+  if (!dragCtx) return;
+  var row = dragRowFrom(e.target);
+  var ctx = dragCtx;
+  dragCtx = null;
+  clearDragMarks();
+  if (!row || row.dataset.dragzone !== ctx.zone) return;
+  e.preventDefault();
+  applyDragReorder(ctx.zone, ctx.from, Number(row.dataset.dragindex));
+  render();
+});
+document.addEventListener('dragend', function(){ dragCtx = null; clearDragMarks(); });
 
 /* =========================================================
    EVENTOS — teclado
