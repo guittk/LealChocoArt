@@ -2699,6 +2699,7 @@ function itemRow(item, kind, shopRow){
   return '<div class="admin-row">' +
     labeledField('Nome', '<input class="input sm" value="'+esc(item.name)+'" data-action="set'+pre+'Name" '+attr+'="'+item.id+'" aria-label="Nome">', 'flex:1 1 160px') +
     labeledField('Unidade', '<select class="input sm" style="width:82px" data-action="set'+pre+'Unit" '+attr+'="'+item.id+'" aria-label="Unidade">'+unitOptions(item.unit)+'</select>') +
+    labeledField('Onde comprou', '<input class="input sm" style="width:130px" value="'+esc(item.store||'')+'" placeholder="Ex: Atacadão" data-action="set'+pre+'Store" '+attr+'="'+item.id+'" aria-label="Onde comprou">') +
     labeledField('Preço do pote', '<input class="input sm" type="number" inputmode="decimal" step="0.01" style="width:110px" value="'+(item.packagePrice||0)+'" data-action="set'+pre+'Price" '+attr+'="'+item.id+'" aria-label="Preço do pacote">') +
     labeledField('Qtd no pote', '<input class="input sm" type="number" inputmode="decimal" step="1" style="width:110px" value="'+(item.packageQty||0)+'" data-action="set'+pre+'Qty" '+attr+'="'+item.id+'" aria-label="Quantidade no pacote">') +
     labeledField('Custo por '+disp.label, '<span style="font-weight:800;font-size:14.5px;color:var(--brand);white-space:nowrap">'+currency(disp.value)+'</span>') +
@@ -2718,6 +2719,7 @@ function financeItemsTab(kind){
     ? '<button class="btn-secondary sm" data-action="'+toggle+'" style="margin-bottom:18px">'+icon('plus',15)+' Adicionar '+title+'</button>'
     : '<div class="new-card"><h3>Nova '+title+'</h3>' +
         '<div class="field"><label for="'+p+'-nome">Nome</label><input class="input" id="'+p+'-nome" placeholder="'+(isIng?'Ex: Chocolate meio amargo':'Ex: Caixinha kraft')+'"></div>' +
+        '<div class="field"><label for="'+p+'-loja">Onde comprou (opcional)</label><input class="input" id="'+p+'-loja" placeholder="Ex: Atacadão"></div>' +
         '<div class="fin-grid-3">' +
           '<div class="field"><label for="'+p+'-unidade">Unidade</label><select class="input" id="'+p+'-unidade">'+unitOptions(isIng?'g':'un')+'</select></div>' +
           '<div class="field"><label for="'+p+'-preco">Preço do pote/pacote (R$)</label><input class="input" id="'+p+'-preco" type="number" inputmode="decimal" step="0.01" value="0"></div>' +
@@ -3019,8 +3021,27 @@ function pageFinanceCompras(){
   var note = '<div class="banner banner-info">'+icon('info',16)+
     '<span>A diferença entre <b>'+currency(s.totalFull)+'</b> (comprando do zero) e <b>'+currency(s.totalProRata)+'</b> (só o que entra nos doces) é o que fica no armário para a próxima fornada: <b>'+currency(s.leftoverValue)+'</b>. Ela não é prejuízo — é estoque adiantado.</span></div>';
 
+  function usageLeftoverChart(rows){
+    if (!rows.length) return '';
+    var bars = rows.map(function(r){
+      var bought = r.packs * r.packQty;
+      var total = Math.max(bought, r.needed, 0.01);
+      var usedPct = clamp(r.needed/total*100, 0, 100);
+      var leftPct = clamp(r.leftover/total*100, 0, 100);
+      return '<div style="margin-bottom:16px">' +
+        '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:800;margin-bottom:6px">' +
+          '<span>'+esc(r.item.name)+'</span><span style="color:var(--ink-3);font-weight:700">'+num(bought, bought % 1 === 0 ? 0 : 1)+' '+esc(r.unit)+' comprado'+'</span></div>' +
+        '<div class="margin-bar"><i class="cost" style="width:'+usedPct+'%"></i><i class="prof" style="width:'+leftPct+'%"></i></div>' +
+        '<p class="hint" style="margin-top:5px">Usado '+num(r.needed, r.needed % 1 === 0 ? 0 : 1)+' '+esc(r.unit)+' · sobra '+num(r.leftover, r.leftover % 1 === 0 ? 0 : 1)+' '+esc(r.unit)+' ('+currency(r.leftoverValue)+')</p>' +
+      '</div>';
+    }).join('') +
+    '<div class="legend"><span><i style="background:var(--ink-3)"></i> usado</span><span><i style="background:var(--brand-2)"></i> sobra</span></div>';
+    return '<div class="admin-card"><div class="admin-card-head">'+icon('scale',18,'var(--brand)')+'<h3 style="flex:1">Quanto de cada ingrediente é usado x sobra</h3></div>' + bars + '</div>';
+  }
+
   return planForm + tiles + note + plan +
     tableFor('Ingredientes para comprar', s.ingRows, 'package') +
+    usageLeftoverChart(s.ingRows) +
     tableFor('Embalagens para comprar', s.packRows, 'truck');
 }
 
@@ -3200,11 +3221,11 @@ function priceHistoryMultiChart(items){
 function itemHistoryRowsHtml(item){
   var h = (item.priceHistory || []).slice().sort(function(a,b){ return a.date < b.date ? 1 : -1; });
   if (!h.length) return '<p class="empty-note">Sem alterações registradas.</p>';
-  return '<div class="tbl-wrap"><table class="tbl" style="min-width:0"><thead><tr><th>Data</th><th class="n">Preço</th><th class="n">Variação</th></tr></thead><tbody>' +
+  return '<div class="tbl-wrap"><table class="tbl" style="min-width:0"><thead><tr><th>Data</th><th>Loja</th><th class="n">Preço</th><th class="n">Variação</th></tr></thead><tbody>' +
     h.map(function(p, i){
       var prev = h[i+1];
       var diff = prev ? Number(p.price) - Number(prev.price) : 0;
-      return '<tr><td class="k">'+esc(dateLabel(strToDate(p.date)))+'</td><td class="n">'+currency(p.price)+'</td>' +
+      return '<tr><td class="k">'+esc(dateLabel(strToDate(p.date)))+'</td><td>'+esc(p.store||'—')+'</td><td class="n">'+currency(p.price)+'</td>' +
         '<td class="n" style="color:'+(diff>0?'var(--danger)':(diff<0?'var(--ok)':'var(--ink-3)'))+'">'+(prev?((diff>0?'+':'')+currency(diff)):'—')+'</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
@@ -3742,9 +3763,10 @@ document.addEventListener('click', function(e){
     var iname = (document.getElementById('ni-nome').value||'').trim();
     if (!iname) { toast('Informe o nome do ingrediente.', 'err'); return; }
     var iprice = Number(document.getElementById('ni-preco').value) || 0;
-    var newIng = { id:'ing'+Date.now(), name:iname, unit:document.getElementById('ni-unidade').value,
+    var istore = (document.getElementById('ni-loja').value||'').trim();
+    var newIng = { id:'ing'+Date.now(), name:iname, unit:document.getElementById('ni-unidade').value, store:istore,
       packagePrice:iprice, packageQty:Number(document.getElementById('ni-qtd').value) || 1,
-      priceHistory:[{ date:todayStr(), price:iprice }] };
+      priceHistory:[{ date:todayStr(), price:iprice, store:istore }] };
     state.ingredients.push(newIng);
     dbSet('ingredients/'+newIng.id, newIng);
     state.addingIngredient = false; render(); toast('Ingrediente criado.', 'ok');
@@ -3758,9 +3780,10 @@ document.addEventListener('click', function(e){
     var pkname = (document.getElementById('np2-nome').value||'').trim();
     if (!pkname) { toast('Informe o nome da embalagem.', 'err'); return; }
     var pkprice = Number(document.getElementById('np2-preco').value) || 0;
-    var newPack = { id:'pack'+Date.now(), name:pkname, unit:document.getElementById('np2-unidade').value,
+    var pkstore = (document.getElementById('np2-loja').value||'').trim();
+    var newPack = { id:'pack'+Date.now(), name:pkname, unit:document.getElementById('np2-unidade').value, store:pkstore,
       packagePrice:pkprice, packageQty:Number(document.getElementById('np2-qtd').value) || 1,
-      priceHistory:[{ date:todayStr(), price:pkprice }] };
+      priceHistory:[{ date:todayStr(), price:pkprice, store:pkstore }] };
     state.packagingItems.push(newPack);
     dbSet('packagingItems/'+newPack.id, newPack);
     state.addingPackaging = false; render(); toast('Embalagem criada.', 'ok');
@@ -3845,8 +3868,8 @@ document.addEventListener('click', function(e){
         pcItem.packagePrice = pcm.newPrice;
         if (!pcItem.priceHistory) pcItem.priceHistory = [];
         var pcLast = pcItem.priceHistory[pcItem.priceHistory.length - 1];
-        if (pcLast && pcLast.date === todayStr()) pcLast.price = pcm.newPrice;
-        else pcItem.priceHistory.push({ date: todayStr(), price: pcm.newPrice });
+        if (pcLast && pcLast.date === todayStr()) { pcLast.price = pcm.newPrice; pcLast.store = pcItem.store || ''; }
+        else pcItem.priceHistory.push({ date: todayStr(), price: pcm.newPrice, store: pcItem.store || '' });
         dbSet((pcm.kind === 'ingredient' ? 'ingredients' : 'packagingItems') + '/' + pcItem.id, pcItem);
         toast('Preço atualizado.', 'ok');
       }
@@ -3984,6 +4007,7 @@ document.addEventListener('change', function(e){
   else if (action === 'setIngredientName') { var si = getIngredient(el.dataset.ingid); if (si) { si.name = el.value; dbSet('ingredients/'+si.id+'/name', si.name); render(); } }
   else if (action === 'setIngredientUnit') { var su = getIngredient(el.dataset.ingid); if (su) { su.unit = el.value; dbSet('ingredients/'+su.id+'/unit', su.unit); } render(); }
   else if (action === 'setIngredientQty') { var sq = getIngredient(el.dataset.ingid); if (sq) { sq.packageQty = Number(el.value) || 0; dbSet('ingredients/'+sq.id+'/packageQty', sq.packageQty); } render(); }
+  else if (action === 'setIngredientStore') { var ss = getIngredient(el.dataset.ingid); if (ss) { ss.store = el.value; dbSet('ingredients/'+ss.id+'/store', ss.store); } render(); }
   else if (action === 'setIngredientPrice') {
     var sp = getIngredient(el.dataset.ingid);
     if (sp) {
@@ -3998,6 +4022,7 @@ document.addEventListener('change', function(e){
   else if (action === 'setPackagingName') { var kn = getPackagingItem(el.dataset.packid); if (kn) { kn.name = el.value; dbSet('packagingItems/'+kn.id+'/name', kn.name); render(); } }
   else if (action === 'setPackagingUnit') { var ku = getPackagingItem(el.dataset.packid); if (ku) { ku.unit = el.value; dbSet('packagingItems/'+ku.id+'/unit', ku.unit); } render(); }
   else if (action === 'setPackagingQty') { var kq = getPackagingItem(el.dataset.packid); if (kq) { kq.packageQty = Number(el.value) || 0; dbSet('packagingItems/'+kq.id+'/packageQty', kq.packageQty); } render(); }
+  else if (action === 'setPackagingStore') { var ks = getPackagingItem(el.dataset.packid); if (ks) { ks.store = el.value; dbSet('packagingItems/'+ks.id+'/store', ks.store); } render(); }
   else if (action === 'setPackagingPrice') {
     var kp = getPackagingItem(el.dataset.packid);
     if (kp) {
