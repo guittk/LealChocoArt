@@ -212,7 +212,7 @@ var state = {
   priceChangeModal: null,
   historySelectedKeys: null,
   editingHistoryEntry: null,   /* { kind, id, date } — linha do histórico de preço em edição */
-  orderFilter: { q:'', status:'todos', when:'todos' },
+  orderFilter: { q:'', status:'todos', when:'todos', paid:'todos' },
   analyticsPeriod: '30',
   analyticsOnlyDone: false,
   planQty: {},                  /* planejamento de produção: { produtoId: qtd } */
@@ -1216,6 +1216,37 @@ function reconcileStock(){
     console.error('Falha ao aplicar baixa de estoque', e);
     reconciling = false;
   });
+}
+/* Cancelar um pedido cujo estoque JÁ foi abatido (`stockApplied`)
+   devolve as unidades — sem isso o estoque exibido no site vai
+   derivando pra baixo pra sempre, já que a única outra escrita em
+   `stock` é a subtração acima. `stockRestored` faz isso reversível:
+   descancelar reaplica a baixa. Pedido cancelado ANTES da baixa
+   rodar (`stockApplied` ainda false) não precisa de nada — o
+   estoque nunca chegou a sair. */
+function restoreStockForOrder(o){
+  if (!o.stockApplied || o.stockRestored) return;
+  (o.items || []).forEach(function(i){
+    if (!i.productId) return;
+    var p = getProduct(i.productId);
+    if (!p || p.stock === undefined || p.stock === null) return;
+    p.stock = Number(p.stock) + Number(i.qty || 0);
+    dbSet('products/'+p.id+'/stock', p.stock);
+  });
+  o.stockRestored = true;
+  dbSet('orders/'+o.id+'/stockRestored', true);
+}
+function reapplyStockForOrder(o){
+  if (!o.stockApplied || !o.stockRestored) return;
+  (o.items || []).forEach(function(i){
+    if (!i.productId) return;
+    var p = getProduct(i.productId);
+    if (!p || p.stock === undefined || p.stock === null) return;
+    p.stock = Math.max(0, Number(p.stock) - Number(i.qty || 0));
+    dbSet('products/'+p.id+'/stock', p.stock);
+  });
+  o.stockRestored = false;
+  dbSet('orders/'+o.id+'/stockRestored', false);
 }
 
 /* ---------- imagens ----------
@@ -2239,6 +2270,8 @@ function filteredOrders(){
     if (f.when === 'hoje' && orderDate(o) !== todayS) return false;
     if (f.when === 'futuros' && !(orderDate(o) >= todayS)) return false;
     if (f.when === 'abertos' && (o.status === 'concluido' || o.status === 'cancelado')) return false;
+    if (f.paid === 'nao' && o.paid) return false;
+    if (f.paid === 'sim' && !o.paid) return false;
     if (q){
       var hay = [o.nome, o.telefone, o.code, o.local, (o.items||[]).map(function(i){ return i.name; }).join(' ')].join(' ').toLowerCase();
       if (hay.indexOf(q) === -1) return false;
@@ -2265,6 +2298,7 @@ function orderCard(o){
         '<div class="order-name">'+esc(o.nome)+
           (o.code ? '<span class="pill pill-line" style="font-size:11px">'+esc(o.code)+'</span>' : '') +
           '<span class="pill pill-'+statusTone(o.status||'pendente')+'" style="font-size:11px">'+statusLabel(o.status||'pendente')+'</span>' +
+          (o.status !== 'cancelado' ? '<span class="pill '+(o.paid?'pill-ok':'pill-danger')+'" style="font-size:11px">'+(o.paid?'Pago':'Não pago')+'</span>' : '') +
         '</div>' +
         '<p class="order-items">'+esc(itemsStr)+'</p>' +
         '<div class="order-meta">' +
@@ -2277,6 +2311,8 @@ function orderCard(o){
       '</div>' +
       '<div class="order-actions">' +
         (o.telefone ? '<a class="btn-whats sm" href="https://wa.me/55'+phoneDigits(o.telefone)+'" target="_blank" rel="noopener" aria-label="Chamar '+esc(o.nome)+' no WhatsApp">'+icon('whatsapp',14)+'</a>' : '') +
+        '<button class="avail-toggle '+(o.paid?'avail-on':'avail-off')+'" data-action="togglePaid" data-id="'+o.id+'">' +
+          (o.paid ? icon('check',13)+' Pago' : 'Marcar pago') + '</button>' +
         '<button class="avail-toggle '+(o.produced?'avail-on':'avail-off')+'" data-action="toggleProduced" data-id="'+o.id+'">' +
           (o.produced ? icon('check',13)+' Produzido' : 'Marcar produzido') + '</button>' +
         '<select class="input sm" style="width:150px" data-action="setOrderStatus" data-id="'+o.id+'" aria-label="Status do pedido de '+esc(o.nome)+'">' +
@@ -2343,7 +2379,12 @@ function pageAdminEncomendas(){
       '<option value="todos"'+(f.status==='todos'?' selected':'')+'>Todos os status</option>' +
       ORDER_STATUS.map(function(s){ return '<option value="'+s.id+'"'+(f.status===s.id?' selected':'')+'>'+s.label+'</option>'; }).join('') +
     '</select>' +
-    ((f.q || f.status!=='todos' || f.when!=='todos') ? '<button class="btn-ghost" data-action="clearOrderFilter">'+icon('x',13)+' Limpar</button>' : '') +
+    '<select class="input" style="width:auto;min-width:150px" data-action="orderFilterPaid" aria-label="Filtrar por pagamento">' +
+      '<option value="todos"'+((f.paid||'todos')==='todos'?' selected':'')+'>Pago e não pago</option>' +
+      '<option value="nao"'+(f.paid==='nao'?' selected':'')+'>Só não pagos</option>' +
+      '<option value="sim"'+(f.paid==='sim'?' selected':'')+'>Só pagos</option>' +
+    '</select>' +
+    ((f.q || f.status!=='todos' || f.when!=='todos' || (f.paid&&f.paid!=='todos')) ? '<button class="btn-ghost" data-action="clearOrderFilter">'+icon('x',13)+' Limpar</button>' : '') +
   '</div>';
 
   /* lista agrupada por dia de retirada */
@@ -2580,9 +2621,29 @@ function costPerUnitByName(){
   state.products.forEach(function(p){ map[p.name] = recipeCosts(p); });
   return map;
 }
+function costPerUnitById(){
+  var map = {};
+  state.products.forEach(function(p){ map[p.id] = recipeCosts(p); });
+  return map;
+}
+/* Custo de um item de pedido, na ordem de confiança:
+   1) unitCost congelado no próprio item (pedidos criados após esta
+      versão) — nunca muda, é o valor real da venda.
+   2) custo ATUAL do produto por id (pedidos sem unitCost congelado,
+      mas com productId — aproximação, mas sobrevive a renomear).
+   3) custo ATUAL por nome (pedidos bem antigos, sem productId nenhum
+      — só existe pra não zerar de vez o histórico mais velho). */
+function orderItemUnitCost(i, costsById, costsByName){
+  if (i.unitCost !== undefined && i.unitCost !== null) return Number(i.unitCost) || 0;
+  var byId = i.productId && costsById[i.productId];
+  if (byId) return byId.finalCostPerPackage;
+  var byName = costsByName[i.name];
+  return byName ? byName.finalCostPerPackage : 0;
+}
 function computeAnalytics(){
   var from = periodStart(state.analyticsPeriod);
-  var costs = costPerUnitByName();
+  var costsById = costPerUnitById();
+  var costsByName = costPerUnitByName();
   var orders = state.orders.filter(function(o){
     if (o.status === 'cancelado') return false;
     if (state.analyticsOnlyDone && o.status !== 'concluido') return false;
@@ -2599,8 +2660,7 @@ function computeAnalytics(){
     var oCost = 0;
     (o.items||[]).forEach(function(i){
       var qty = Number(i.qty||0), price = Number(i.price||0);
-      var c = costs[i.name];
-      var unitCost = c ? c.finalCostPerPackage : 0;
+      var unitCost = orderItemUnitCost(i, costsById, costsByName);
       oCost += unitCost * qty;
       totalUnits += qty;
       if (!productMap[i.name]) productMap[i.name] = { name:i.name, qty:0, revenue:0, cost:0 };
@@ -2630,9 +2690,17 @@ function computeAnalytics(){
     }
   });
 
+  /* prejuízo do mesmo período — sem isso o "Lucro" da tela conta só o
+     que vendeu bem e nunca desconta a fornada que deu errado. */
+  var totalLoss = state.lossEvents.filter(function(ev){
+    return ev.date >= from;
+  }).reduce(function(s,ev){ return s + lossEventCost(ev); }, 0);
+
   var toArr = function(m){ return Object.keys(m).map(function(k){ return m[k]; }); };
+  var totalProfit = totalRevenue - totalCost;
   return {
-    totalRevenue:totalRevenue, totalCost:totalCost, totalProfit: totalRevenue - totalCost,
+    totalRevenue:totalRevenue, totalCost:totalCost, totalProfit: totalProfit,
+    totalLoss: totalLoss, netResult: totalProfit - totalLoss,
     marginPct: totalRevenue > 0 ? ((totalRevenue-totalCost)/totalRevenue)*100 : 0,
     totalOrders: orders.length, totalUnits: totalUnits,
     avgTicket: orders.length ? totalRevenue/orders.length : 0,
@@ -2674,7 +2742,9 @@ function pageAdminAnalises(){
   var tiles = '<div class="stat-grid">' +
     statTile('Faturamento', currency(a.totalRevenue), 'coin', 'brand') +
     statTile('Custo de produção', currency(a.totalCost), 'package', '', 'ingredientes + embalagem' + (Number(state.financialGoals.laborHourCost)>0 ? ' + mão de obra' : '')) +
-    statTile('Lucro', currency(a.totalProfit), 'chart', a.totalProfit >= 0 ? 'pos' : 'neg', 'margem de ' + a.marginPct.toFixed(1) + '%') +
+    statTile('Lucro das vendas', currency(a.totalProfit), 'chart', a.totalProfit >= 0 ? 'pos' : 'neg', 'margem de ' + a.marginPct.toFixed(1) + '%') +
+    statTile('Perdas no período', currency(a.totalLoss), 'alert', a.totalLoss > 0 ? 'neg' : '') +
+    statTile('Resultado líquido', currency(a.netResult), 'wallet', a.netResult >= 0 ? 'pos' : 'neg', 'lucro das vendas − perdas') +
     statTile('Pedidos', a.totalOrders, 'clipboard', '', a.totalUnits + ' itens vendidos') +
     statTile('Ticket médio', currency(a.avgTicket), 'bag') +
   '</div>';
@@ -3968,7 +4038,12 @@ document.addEventListener('click', function(e){
     if (op) { op.produced = !op.produced; dbSet('orders/'+op.id+'/produced', op.produced); }
     render();
   }
-  else if (action === 'clearOrderFilter') { state.orderFilter = { q:'', status:'todos', when:'todos' }; render(); }
+  else if (action === 'togglePaid') {
+    var opd = state.orders.find(function(x){ return x.id === el.dataset.id; });
+    if (opd) { opd.paid = !opd.paid; dbSet('orders/'+opd.id+'/paid', opd.paid); }
+    render();
+  }
+  else if (action === 'clearOrderFilter') { state.orderFilter = { q:'', status:'todos', when:'todos', paid:'todos' }; render(); }
 
   /* ---- agenda ---- */
   else if (action === 'toggleAddScheduleRule') { state.addingScheduleRule = !state.addingScheduleRule; render(); }
@@ -4358,6 +4433,7 @@ document.addEventListener('change', function(e){
   else if (action === 'orderSearch') { state.orderFilter.q = el.value; render(); }
   else if (action === 'orderFilterWhen') { state.orderFilter.when = el.value; render(); }
   else if (action === 'orderFilterStatus') { state.orderFilter.status = el.value; render(); }
+  else if (action === 'orderFilterPaid') { state.orderFilter.paid = el.value; render(); }
   else if (action === 'toggleOnlyDone') { state.analyticsOnlyDone = el.checked; render(); }
 
   /* doces */
@@ -4370,7 +4446,15 @@ document.addEventListener('change', function(e){
   /* encomendas */
   else if (action === 'setOrderStatus') {
     var o = state.orders.find(function(x){ return x.id === el.dataset.id; });
-    if (o) { o.status = el.value; dbSet('orders/'+o.id+'/status', o.status); render(); }
+    if (o) {
+      var wasCancelled = o.status === 'cancelado';
+      var willCancel = el.value === 'cancelado';
+      o.status = el.value;
+      dbSet('orders/'+o.id+'/status', o.status);
+      if (willCancel && !wasCancelled) restoreStockForOrder(o);
+      else if (wasCancelled && !willCancel) reapplyStockForOrder(o);
+    }
+    render();
   }
 
   /* pontos */
@@ -4561,10 +4645,14 @@ document.addEventListener('submit', function(e){
     local: localName,
     payment: state.orderPayment,
     observacoes: observacoes,
-    items: items.map(function(i){ return { productId: i.product.id, name: i.product.name, qty: i.qty, price: i.product.price }; }),
+    /* unitCost é o custo (ingredientes+embalagem+mão de obra) CONGELADO
+       no instante da venda — sem isso, reajustar o preço de um insumo
+       reescreveria o lucro de pedidos já fechados, meses depois. */
+    items: items.map(function(i){ return { productId: i.product.id, name: i.product.name, qty: i.qty, price: i.product.price, unitCost: recipeCosts(i.product).finalCostPerPackage }; }),
     total: cartTotal(),
     status: 'pendente',
     produced: false,
+    paid: false,
     stockApplied: false,
     createdAt: new Date().toISOString()
   };
