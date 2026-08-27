@@ -204,6 +204,9 @@ var state = {
   addingIngredient: false,
   addingPackaging: false,
   addingLoss: false,
+  metasRateView: 'todos',       /* 'todos' (ritmo configurado) | 'umDoce' (calculadora avulsa) */
+  metasSingleProductId: null,
+  metasSingleQty: 5,
   lossDraft: null,        /* rascunho da perda em edição: { productId, batches, date, note, includeLabor, includePackaging, lostIngredientIds } */
   confirmDialog: null,          /* { title, text, danger, action, payload } */
   priceChangeModal: null,
@@ -682,8 +685,9 @@ function computeMixScenario(){
 
 /* Direção oposta do cenário de mix: em vez de "quanto preciso vender
    pra bater a meta", parte do ritmo de venda já configurado (o mesmo
-   usado em Reposição) e calcula o lucro que ELE gera — pra responder
-   "vendendo no ritmo que eu realmente vendo, eu bato a meta ou não". */
+   usado em Reposição) e calcula o faturamento e lucro que ELE gera de
+   verdade — bater ou não a meta é só uma leitura a mais em cima
+   desse número, não o motivo de existir. */
 function computeRateProjection(){
   var g = state.financialGoals || {};
   var prods = state.products.filter(function(p){ return !isHidden(p); });
@@ -705,6 +709,27 @@ function computeRateProjection(){
     revenueDay:revenueDay, profitDay:profitDay, activeDaysMonth:activeDaysMonth,
     revenueMonth:revenueMonth, overhead:overhead, profitMonth:profitMonth,
     target:target, gap: profitMonth - target, hitsGoal: profitMonth >= target
+  };
+}
+/* Calculadora avulsa: só "vendendo X de UM doce por dia, quanto entra
+   e quanto sobra" — sem mexer no ritmo configurado (que é usado em
+   Reposição e na simulação de caixa) e sem descontar custo fixo, que
+   é do negócio inteiro, não desse doce isolado. */
+function computeSingleProductProjection(){
+  var g = state.financialGoals || {};
+  var prods = state.products.filter(function(p){ return !isHidden(p); });
+  if (!prods.length) return null;
+  var p = getProduct(state.metasSingleProductId) || prods[0];
+  var qty = Math.max(0, Number(state.metasSingleQty) || 0);
+  var c = recipeCosts(p);
+  var daysPerWeek = Number(g.daysPerWeek) || 0;
+  var activeDaysMonth = daysPerWeek > 0 ? daysPerWeek * WEEKS_PER_MONTH : 30;
+  var revenueDay = qty * c.sellPrice;
+  var profitDay = qty * c.profit;
+  return {
+    product:p, qty:qty, costs:c, activeDaysMonth:activeDaysMonth,
+    revenueDay:revenueDay, profitDay:profitDay,
+    revenueMonth: revenueDay * activeDaysMonth, profitMonth: profitDay * activeDaysMonth
   };
 }
 
@@ -946,6 +971,7 @@ function restockGantt(plan){
     return '<div class="gantt-row">' +
       '<div class="gantt-label">' +
         '<i style="background:'+color+'"></i>' +
+        icon(r.kind==='packaging'?'truck':'package', 13, 'var(--ink-3)') +
         '<span><b>'+esc(r.item.name)+'</b><small>acaba em '+shortDate(dayOffsetToDate(r.cycleDays))+'</small></span>' +
       '</div>' +
       '<div class="gantt-track">'+grid+segs+'</div>' +
@@ -1102,14 +1128,14 @@ function pageFinanceReposicao(){
   var tiles = '<div class="stat-grid">' +
     statTile('Compra de hoje', currency(plan.firstBuyCost), 'cart', 'brand', 'um lote de cada insumo') +
     statTile('Gasto em 6 meses', currency(plan.totalCost), 'wallet', '', plan.rows.reduce(function(s,r){ return s + r.buysInHorizon; }, 0)+' compras no total') +
-    statTile('Acaba primeiro', esc(plan.rows[0].item.name), 'alert', 'neg', 'em '+Math.round(plan.rows[0].cycleDays)+' dias · '+shortDate(dayOffsetToDate(plan.rows[0].cycleDays))) +
-    statTile('Dura mais', esc(plan.rows[plan.rows.length-1].item.name), 'check', 'pos', Math.round(plan.rows[plan.rows.length-1].cycleDays)+' dias') +
+    statTile('Acaba primeiro', esc(plan.rows[0].item.name), 'alert', 'neg', (plan.rows[0].kind==='packaging'?'embalagem · ':'ingrediente · ')+'em '+Math.round(plan.rows[0].cycleDays)+' dias · '+shortDate(dayOffsetToDate(plan.rows[0].cycleDays))) +
+    statTile('Dura mais', esc(plan.rows[plan.rows.length-1].item.name), 'check', 'pos', (plan.rows[plan.rows.length-1].kind==='packaging'?'embalagem · ':'ingrediente · ')+Math.round(plan.rows[plan.rows.length-1].cycleDays)+' dias') +
   '</div>';
 
   var chart = '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('calendar',18,'var(--brand)')+'<h3 style="flex:1">Quando cada insumo acaba</h3>' +
       '<span class="pill pill-lilac">próximos 6 meses</span></div>' +
-    '<p class="hint" style="margin-top:-8px">Pra que serve: saber com antecedência quando comprar de novo, sem depender de reparar que o pote esvaziou.</p>' +
+    '<p class="hint" style="margin-top:-8px">Pra que serve: saber com antecedência quando comprar de novo, sem depender de reparar que o pote esvaziou. Conta ingredientes ('+icon('package',11)+') e embalagens ('+icon('truck',11)+') juntos.</p>' +
     restockGantt(plan) + '</div>';
 
   var table = '<div class="admin-card">' +
@@ -1118,7 +1144,7 @@ function pageFinanceReposicao(){
     '<thead><tr><th>Insumo</th><th class="n">Consumo/dia</th><th class="n">Potes por compra</th><th class="n">Dura</th><th class="n">Próxima compra</th><th class="n">Compras em 6m</th><th class="n">Gasto em 6m</th></tr></thead><tbody>' +
     plan.rows.map(function(r){
       return '<tr>' +
-        '<td class="k">'+esc(r.item.name)+'</td>' +
+        '<td class="k">'+icon(r.kind==='packaging'?'truck':'package', 13, 'var(--ink-3)')+' '+esc(r.item.name)+'</td>' +
         '<td class="n">'+num(r.consumption, 2)+' '+esc(r.unit)+'</td>' +
         '<td class="n"><input class="input xs" style="width:70px;text-align:right" type="number" inputmode="numeric" min="1" step="1" value="'+r.packs+'" data-action="setRestockPacks" data-key="'+itemKey(r.kind, r.item.id)+'" aria-label="Potes por compra de '+esc(r.item.name)+'"></td>' +
         '<td class="n">'+num(r.cycleDays, r.cycleDays < 10 ? 1 : 0)+' dias</td>' +
@@ -3148,26 +3174,55 @@ function pageFinanceMetas(){
     '</div>';
   }).join('');
 
-  /* ritmo real de venda → lucro que ele gera (mão inversa do mix acima) */
-  var rp = computeRateProjection();
-  var rateCard = dailyRateCard() +
-    '<div class="admin-card">' +
-      '<div class="admin-card-head">'+icon('sun',18,'var(--brand)')+'<h3 style="flex:1">Vendendo nesse ritmo, eu bato a meta?</h3>' +
-        (rp.anyRate ? '<span class="pill '+(rp.hitsGoal?'pill-ok':'pill-danger')+'">'+(rp.hitsGoal?'bate a meta':'não bate')+'</span>' : '') +
+  /* ritmo real de venda → faturamento e lucro que ele gera de verdade
+     (mão inversa do mix acima). Duas visões possíveis: todos os doces
+     no ritmo já configurado (usado também em Reposição), ou um doce
+     isolado com uma quantidade avulsa — pra responder rapidinho
+     "e se eu vender X pão de mel por dia" sem mexer no ritmo real. */
+  var rateView = state.metasRateView === 'umDoce' ? 'umDoce' : 'todos';
+  var viewSeg = '<div class="seg" style="margin-bottom:16px">' +
+    '<button type="button" class="seg-btn'+(rateView!=='umDoce'?' on':'')+'" data-action="setMetasRateView" data-view="todos">'+icon('chart',15)+' Ritmo configurado</button>' +
+    '<button type="button" class="seg-btn'+(rateView==='umDoce'?' on':'')+'" data-action="setMetasRateView" data-view="umDoce">'+icon('cake',15)+' Lucro por vendas diárias</button>' +
+  '</div>';
+
+  var rateResult;
+  if (rateView === 'umDoce'){
+    var sp = computeSingleProductProjection();
+    rateResult = !sp ? '<p class="empty-note">Cadastre um doce primeiro.</p>' :
+      '<div class="fin-grid-2" style="margin-bottom:16px">' +
+        '<div class="field" style="margin:0"><label for="ms-produto">Doce</label><select class="input sm" id="ms-produto" data-action="setMetasSingleProduct">' +
+          state.products.filter(function(p){ return !isHidden(p); }).map(function(p){ return '<option value="'+p.id+'"'+(p.id===sp.product.id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('') +
+        '</select></div>' +
+        '<div class="field" style="margin:0"><label for="ms-qtd">Quantos por dia</label><input class="input sm" id="ms-qtd" type="number" inputmode="decimal" min="0" step="0.5" value="'+sp.qty+'" data-action="setMetasSingleQty"></div>' +
       '</div>' +
-      '<p class="hint" style="margin:-10px 0 14px">Pra que serve: em vez de calcular quanto você PRECISA vender, usa o "un/dia" que você já preencheu acima e mostra o lucro que ISSO realmente dá.</p>' +
-      (!rp.anyRate
-        ? '<p class="empty-note">Preencha o ritmo de venda de ao menos um doce acima.</p>'
-        : '<div class="stat-grid">' +
-            statTile('Faturamento/dia', currency(rp.revenueDay), 'coin') +
-            statTile('Lucro/dia', currency(rp.profitDay), 'sun', rp.profitDay>0?'pos':'neg') +
-            statTile('Faturamento no mês', currency(rp.revenueMonth), 'chart', '', rp.activeDaysMonth+' dias trabalhados') +
-            statTile('Lucro no mês', currency(rp.profitMonth), 'wallet', rp.hitsGoal?'pos':'neg', 'já descontando custo fixo'+(g.includeTax?' e MEI':'')) +
-          '</div>' +
-          '<p class="hint" style="margin-top:10px">'+(rp.hitsGoal
-            ? 'Sobra <b>'+currency(rp.gap)+'</b> acima da meta de <b>'+currency(rp.target)+'</b>.'
-            : 'Falta <b>'+currency(-rp.gap)+'</b> para a meta de <b>'+currency(rp.target)+'</b> — suba o ritmo de venda ou revise preço/custo.')+'</p>') +
-    '</div>';
+      '<div class="stat-grid">' +
+        statTile('Faturamento/dia', currency(sp.revenueDay), 'coin') +
+        statTile('Lucro/dia', currency(sp.profitDay), 'sun', sp.profitDay>0?'pos':'neg') +
+        statTile('Faturamento no mês', currency(sp.revenueMonth), 'chart', '', sp.activeDaysMonth.toFixed(1)+' dias trabalhados') +
+        statTile('Lucro no mês', currency(sp.profitMonth), 'wallet', sp.profitMonth>0?'pos':'neg') +
+      '</div>' +
+      '<p class="hint" style="margin-top:10px">Já inclui ingredientes, embalagem e mão de obra de cada <b>'+esc(sp.product.name)+'</b>. Não desconta o custo fixo do mês, porque esse custo é do negócio inteiro, não de um doce isolado.</p>';
+  } else {
+    var rp = computeRateProjection();
+    rateResult = !rp.anyRate
+      ? '<p class="empty-note">Preencha o ritmo de venda no card abaixo.</p>'
+      : '<div class="stat-grid">' +
+          statTile('Faturamento/dia', currency(rp.revenueDay), 'coin') +
+          statTile('Lucro/dia', currency(rp.profitDay), 'sun', rp.profitDay>0?'pos':'neg') +
+          statTile('Faturamento no mês', currency(rp.revenueMonth), 'chart', '', rp.activeDaysMonth.toFixed(1)+' dias trabalhados') +
+          statTile('Lucro no mês', currency(rp.profitMonth), 'wallet', rp.hitsGoal?'pos':'neg', 'já descontando custo fixo'+(g.includeTax?' e MEI':'')) +
+        '</div>' +
+        '<p class="hint" style="margin-top:10px">'+(rp.hitsGoal
+          ? 'Isso bate a meta de <b>'+currency(rp.target)+'</b> — sobra <b>'+currency(rp.gap)+'</b>.'
+          : 'Falta <b>'+currency(-rp.gap)+'</b> para a meta de <b>'+currency(rp.target)+'</b>.')+'</p>';
+  }
+
+  var rateCard = '<div class="admin-card">' +
+      '<div class="admin-card-head">'+icon('sun',18,'var(--brand)')+'<h3 style="flex:1">Lucro pelo ritmo de venda</h3></div>' +
+      '<p class="hint" style="margin:-10px 0 14px">Pra que serve: saber quanto de faturamento e lucro um ritmo de venda realmente traz — pra todos os doces configurados de uma vez, ou pra um doce isolado com uma quantidade avulsa.</p>' +
+      viewSeg + rateResult +
+    '</div>' +
+    (rateView === 'todos' ? dailyRateCard() : '');
 
   return form + overheadCard + rateCard + mixCard +
     '<p class="field-label" style="margin:26px 0 12px">Cenário por doce</p>' + cards;
@@ -3237,7 +3292,7 @@ function pageFinanceCompras(){
   var note = '<div class="banner banner-info">'+icon('info',16)+
     '<span>A diferença entre <b>'+currency(s.totalFull)+'</b> (comprando do zero) e <b>'+currency(s.totalProRata)+'</b> (só o que entra nos doces) é o que fica no armário para a próxima fornada: <b>'+currency(s.leftoverValue)+'</b>. Ela não é prejuízo — é estoque adiantado.</span></div>';
 
-  function usageLeftoverChart(rows){
+  function usageLeftoverChart(rows, title){
     if (!rows.length) return '';
     var bars = rows.map(function(r){
       var bought = r.packs * r.packQty;
@@ -3252,13 +3307,14 @@ function pageFinanceCompras(){
       '</div>';
     }).join('') +
     '<div class="legend"><span><i style="background:var(--ink-3)"></i> usado</span><span><i style="background:var(--brand-2)"></i> sobra</span></div>';
-    return '<div class="admin-card"><div class="admin-card-head">'+icon('scale',18,'var(--brand)')+'<h3 style="flex:1">Quanto de cada ingrediente é usado x sobra</h3></div>' + bars + '</div>';
+    return '<div class="admin-card"><div class="admin-card-head">'+icon('scale',18,'var(--brand)')+'<h3 style="flex:1">'+title+'</h3></div>' + bars + '</div>';
   }
 
   return planForm + tiles + note + plan +
     tableFor('Ingredientes para comprar', s.ingRows, 'package') +
-    usageLeftoverChart(s.ingRows) +
-    tableFor('Embalagens para comprar', s.packRows, 'truck');
+    usageLeftoverChart(s.ingRows, 'Quanto de cada ingrediente é usado x sobra') +
+    tableFor('Embalagens para comprar', s.packRows, 'truck') +
+    usageLeftoverChart(s.packRows, 'Quanto de cada embalagem é usado x sobra');
 }
 
 /* ---------- perdas (fornada que deu errado) ---------- */
@@ -4176,6 +4232,7 @@ document.addEventListener('click', function(e){
 
   /* ---- metas / análises / compras ---- */
   else if (action === 'setAnalyticsPeriod') { state.analyticsPeriod = el.dataset.period; render(); }
+  else if (action === 'setMetasRateView') { state.metasRateView = el.dataset.view; render(); }
   else if (action === 'setGoalMode') { state.financialGoals.goalMode = el.dataset.mode; dbSet('settings/financeGoals', state.financialGoals); render(); }
   else if (action === 'toggleUseMix') { state.financialGoals.useMix = !state.financialGoals.useMix; dbSet('settings/financeGoals', state.financialGoals); render(); }
   else if (action === 'resetRate') { state.consumptionRate = {}; render(); toast('Voltou para as vendas reais dos últimos 30 dias.', 'ok'); }
@@ -4311,6 +4368,7 @@ document.addEventListener('input', function(e){
     return;
   }
   if (action === 'setLossDraftBatches'){ state.lossDraft.batches = el.value; debouncedRender(); return; }
+  if (action === 'setMetasSingleQty'){ state.metasSingleQty = el.value; debouncedRender(); return; }
 });
 
 /* =========================================================
@@ -4435,6 +4493,7 @@ document.addEventListener('change', function(e){
   else if (action === 'setPlanQty') { state.planQty[el.dataset.id] = Number(el.value) || 0; render(); }
   else if (action === 'setConsumptionRate') { state.consumptionRate[el.dataset.id] = Math.max(0, Number(el.value) || 0); render(); }
   else if (action === 'setRestockPacks') { state.restockPacks[el.dataset.key] = Math.max(1, Math.floor(Number(el.value) || 1)); render(); }
+  else if (action === 'setMetasSingleProduct') { state.metasSingleProductId = el.value; render(); }
 
   /* perdas */
   else if (action === 'setLossDraftProduct') {
