@@ -3499,20 +3499,25 @@ function pageFinanceMetas(){
          então vender o suficiente pra cobrir o maior dos dois já cobre
          o menor junto (não são filas separadas de vendas). */
       var totalToStart = fp.totalFull + initialCost;
-      var unitsForIngredient = fp.sellPrice > 0 ? Math.ceil(fp.totalFull / fp.sellPrice - 1e-9) : 0;
-      var unitsForInitial = (initialCost > 0 && c3.profit > 0) ? Math.ceil(initialCost / c3.profit - 1e-9) : 0;
-      var unitsTotal = Math.max(unitsForIngredient, unitsForInitial);
+      /* Exato (não arredondado) de cada meta — precisa ficar fracionário
+         até aqui, senão Por dia/Por semana calculam a partir de um Por
+         mês já arredondado pra cima e inflam o ritmo. Só a versão final
+         (unitsTotal) é arredondada pra cima, igual o paceBlock faz. */
+      var exactForIngredient = fp.sellPrice > 0 ? fp.totalFull / fp.sellPrice : 0;
+      var exactForInitial = (initialCost > 0 && c3.profit > 0) ? initialCost / c3.profit : 0;
+      var exactTotal = Math.max(exactForIngredient, exactForInitial);
+      var unitsTotal = exactTotal > 0 ? Math.ceil(exactTotal - 1e-9) : 0;
       var totalBlock = !(totalToStart > 0) ? '' :
         '<p class="field-label" style="margin-top:18px">Total pra começar</p>' +
         '<div class="stat-grid">' +
           statTile('Gasto total', currency(totalToStart), 'cart', 'neg', 'ingredientes + custo inicial') +
           statTile('Vender no total', unitsTotal > 0 ? unitsLabel(unitsTotal) : '—', 'coin', 'brand', 'o maior dos dois — cobre os dois juntos') +
         '</div>' +
-        (unitsTotal > 0 ? (function(){
+        (exactTotal > 0 ? (function(){
           var daysPerWeek = Number(g.daysPerWeek) || 0;
           return '<div class="stat-grid" style="margin-top:10px">' +
-              statTile('Por dia', daysPerWeek > 0 ? unitsLabel(round1(unitsTotal / WEEKS_PER_MONTH / daysPerWeek)) : '—', 'sun') +
-              statTile('Por semana', unitsLabel(round1(unitsTotal / WEEKS_PER_MONTH)), 'calendar') +
+              statTile('Por dia', daysPerWeek > 0 ? unitsLabel(round1(exactTotal / WEEKS_PER_MONTH / daysPerWeek)) : '—', 'sun') +
+              statTile('Por semana', unitsLabel(round1(exactTotal / WEEKS_PER_MONTH)), 'calendar') +
               statTile('Por mês', unitsLabel(unitsTotal), 'chart', 'brand') +
             '</div>';
         })() : '');
