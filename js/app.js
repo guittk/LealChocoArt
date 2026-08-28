@@ -3407,6 +3407,11 @@ function pageFinanceMetas(){
         statTile('Faturamento no mês', currency(sp.revenueMonth), 'chart', '', sp.activeDaysMonth.toFixed(1)+' dias trabalhados') +
         statTile('Lucro no mês', currency(sp.profitMonth), 'wallet', sp.profitMonth>0?'pos':'neg') +
       '</div>' +
+      '<p class="field-label" style="margin-top:18px">Depois do custo fixo do negócio</p>' +
+      '<div class="stat-grid">' +
+        statTile('Custo fixo do mês', currency(monthlyOverhead()), 'wallet', '', 'custo fixo'+(g.includeTax?' + MEI':'')) +
+        statTile('Lucro líquido no mês', currency(sp.profitMonth - monthlyOverhead()), 'coin', (sp.profitMonth - monthlyOverhead())>0?'pos':'neg') +
+      '</div>' +
     '</div>';
   } else {
     var overheadStats = '<div class="stat-grid">' +
