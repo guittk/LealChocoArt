@@ -3446,20 +3446,28 @@ function pageFinanceMetas(){
         productBlock = '<div class="banner banner-danger" style="margin-top:14px">'+icon('alert',16)+'<span>Lucro por unidade de <b>'+esc(selectedProduct.name)+'</b> é '+currency(c.profit)+'. Nenhuma quantidade fecha a conta — ajuste preço ou custo em <b>Receitas</b>.</span></div>';
       } else {
         var fp = firstPurchaseIngredients(selectedProduct);
-        var firstBuyBlock = (fp.rows.length && fp.totalFull > 0)
-          ? '<p class="field-label" style="margin-top:18px">Comprando os ingredientes do zero (potes inteiros)</p>' +
-            '<div class="stat-grid">' +
-              statTile('Gasto na 1ª compra', currency(fp.totalFull), 'cart', 'neg') +
-              statTile('Vender para reaver', fp.unitsToRecover ? unitsLabel(fp.unitsToRecover) : '—', 'coin', 'brand') +
-              statTile('Rende nesta fornada', unitsLabel(fp.packagesFromBatch), 'cake') +
-            '</div>'
-          : '';
-        productBlock = firstBuyBlock +
-          '<p class="field-label" style="margin-top:18px">Para pagar o que foi gasto na primeira compra</p><div class="stat-grid">' +
-            statTile('Por dia', unitsLabel(selectedRes.breakeven.unitsDay), 'sun') +
-            statTile('Por semana', unitsLabel(selectedRes.breakeven.unitsWeek), 'calendar') +
-            statTile('Por mês', unitsLabel(selectedRes.breakeven.unitsMonth), 'chart') +
-          '</div>' +
+        var hasFirstBuy = fp.rows.length && fp.totalFull > 0;
+        var firstBuyBlock = !hasFirstBuy ? '' :
+          '<p class="field-label" style="margin-top:18px">Comprando os ingredientes do zero (potes inteiros)</p>' +
+          '<div class="stat-grid">' +
+            statTile('Gasto na 1ª compra', currency(fp.totalFull), 'cart', 'neg') +
+            statTile('Vender para reaver', fp.unitsToRecover ? unitsLabel(fp.unitsToRecover) : '—', 'coin', 'brand') +
+            statTile('Rende nesta fornada', unitsLabel(fp.packagesFromBatch), 'cake') +
+          '</div>';
+        /* "Vender para reaver" é o total pra zerar a conta, não importa o
+           prazo — o que muda com o prazo é o RITMO diário necessário pra
+           chegar lá dentro de 1 dia, 1 semana ou 1 mês. */
+        var recoverPaceBlock = !hasFirstBuy ? '' : (function(){
+          var exactUnits = fp.sellPrice > 0 ? fp.totalFull / fp.sellPrice : 0;
+          var daysPerWeek = Number(g.daysPerWeek) || 0;
+          var activeDaysMonth = daysPerWeek > 0 ? daysPerWeek * WEEKS_PER_MONTH : 30;
+          return '<p class="field-label" style="margin-top:18px">Ritmo pra pagar o que foi gasto na primeira compra</p><div class="stat-grid">' +
+              statTile('Em 1 dia', unitsLabel(Math.ceil(exactUnits - 1e-9)), 'sun', '', 'vendendo tudo hoje') +
+              statTile('Em 1 semana', daysPerWeek > 0 ? unitsLabel(round1(exactUnits / daysPerWeek)) : '—', 'calendar', '', daysPerWeek > 0 ? 'por dia, até o fim da semana' : '') +
+              statTile('Em 1 mês', unitsLabel(round1(exactUnits / activeDaysMonth)), 'chart', '', 'por dia, até o fim do mês') +
+            '</div>';
+        })();
+        productBlock = firstBuyBlock + recoverPaceBlock +
           '<p class="field-label" style="margin-top:18px">Para bater a meta</p>' +
           '<div class="stat-grid">' +
             statTile('Por dia', unitsLabel(selectedRes.goal.unitsDay), 'sun', 'brand') +
