@@ -2932,6 +2932,19 @@ function statTile(label, value, iconName, cls, sub){
     '<p class="stat-tile-value">'+value+'</p><p class="stat-tile-label">'+esc(label)+'</p>' +
     (sub ? '<p class="stat-tile-sub">'+sub+'</p>' : '') + '</div>';
 }
+/* Card grande no topo do dashboard — o número que resume "como foi",
+   pra bater o olho sem precisar ler o stat-grid inteiro. */
+function heroResult(label, value, iconName, tone, sub){
+  return '<div class="hero-result '+(tone||'')+'">' +
+    '<div class="hero-result-ic">'+icon(iconName,26)+'</div>' +
+    '<div class="hero-result-body"><p class="hero-result-label">'+esc(label)+'</p>' +
+    '<p class="hero-result-value">'+value+'</p>' +
+    (sub ? '<p class="hero-result-sub">'+sub+'</p>' : '') +
+    '</div></div>';
+}
+function sectionLabel(text, iconName){
+  return '<p class="section-label">'+(iconName?icon(iconName,15,'var(--brand)'):'')+' '+esc(text)+'</p>';
+}
 function barRow(label, valueLabel, pct, tone){
   return '<div class="bar-row">' +
     '<div class="bar-row-label" title="'+esc(label)+'">'+esc(label)+'</div>' +
@@ -3000,18 +3013,20 @@ function pageAnalysesVendas(){
   var netResultSub = 'lucro das vendas − perdas' + (a.netResultDelta === null ? '' :
     (a.netResultDelta >= 0 ? ' · +' : ' · ') + currency(a.netResultDelta) + ' vs. anterior');
 
+  var hero = heroResult('Resultado líquido do período', currency(a.netResult), 'wallet',
+    a.netResult >= 0 ? 'pos' : 'neg', netResultSub);
+
   var tiles = '<div class="stat-grid">' +
     statTile('Faturamento', currency(a.totalRevenue), 'coin', 'brand', revenueDeltaSub) +
-    statTile('Custo de produção', currency(a.totalCost), 'package', '', 'ingredientes + embalagem' + (Number(state.financialGoals.laborHourCost)>0 ? ' + mão de obra' : '')) +
     statTile('Lucro das vendas', currency(a.totalProfit), 'chart', a.totalProfit >= 0 ? 'pos' : 'neg', 'margem de ' + a.marginPct.toFixed(1) + '%') +
+    statTile('Custo de produção', currency(a.totalCost), 'package', '', 'ingredientes + embalagem' + (Number(state.financialGoals.laborHourCost)>0 ? ' + mão de obra' : '')) +
     statTile('Perdas no período', currency(a.totalLoss), 'alert', a.totalLoss > 0 ? 'neg' : '') +
-    statTile('Resultado líquido', currency(a.netResult), 'wallet', a.netResult >= 0 ? 'pos' : 'neg', netResultSub) +
     statTile('Pedidos', a.totalOrders, 'clipboard', '', a.totalUnits + ' itens vendidos') +
     statTile('Ticket médio', currency(a.avgTicket), 'bag') +
   '</div>';
 
   if (!a.totalOrders){
-    return head + tiles + '<div class="slot-empty">Nenhum pedido no período escolhido.</div>';
+    return head + hero + tiles + '<div class="slot-empty">Nenhum pedido no período escolhido.</div>';
   }
 
   var maxProfit = Math.max.apply(null, a.topProducts.map(function(p){ return Math.abs(p.profit); }).concat([1]));
@@ -3048,7 +3063,8 @@ function pageAnalysesVendas(){
     return barRow(w.label, currency(w.revenue), Math.round(w.revenue/maxWd*100));
   }).join('');
 
-  return head + tiles +
+  return head + hero + sectionLabel('Números do período') + tiles +
+    sectionLabel('Detalhamento') +
     '<div class="dash-grid">' +
       dashPanel('Lucro por doce', 'chart', prodHtml) +
       dashPanel('Faturamento por doce', 'coin', revHtml) +
@@ -3092,8 +3108,10 @@ function pageFinanceResumo(){
   var loss30 = state.lossEvents.filter(function(ev){ return ev.date >= from30; })
     .reduce(function(s,ev){ return s + lossEventCost(ev); }, 0);
 
+  var hero = heroResult('Margem média dos doces', avg.toFixed(1)+'%', 'scale',
+    avg >= 40 ? 'pos' : (avg > 0 ? '' : 'neg'), 'sobre o preço de venda · '+prods.length+' doce(s) ativo(s)');
+
   var tiles = '<div class="stat-grid">' +
-    statTile('Margem média', avg.toFixed(1)+'%', 'scale', avg >= 40 ? 'pos' : (avg > 0 ? '' : 'neg'), 'sobre o preço de venda') +
     statTile('Custo fixo do mês', currency(monthlyOverhead()), 'wallet', '', (state.financialGoals.includeTax ? 'inclui a taxa MEI' : 'sem a taxa MEI')) +
     statTile('Mais lucrativo', melhor ? esc(melhor.p.name) : '—', 'sparkle', 'brand', melhor ? currency(melhor.c.profit)+' por unidade' : '') +
     statTile('Doces ativos', prods.length, 'cake') +
@@ -3130,7 +3148,8 @@ function pageFinanceResumo(){
   }).join('') +
   '<div class="legend"><span><i style="background:var(--ink-3)"></i> custo</span><span><i style="background:var(--brand-2)"></i> lucro</span></div>';
 
-  return alerts + tiles +
+  return alerts + hero + sectionLabel('Números do negócio') + tiles +
+    sectionLabel('Detalhamento') +
     '<div class="admin-card"><div class="admin-card-head">'+icon('list',18,'var(--brand)')+'<h3 style="flex:1">Custo e lucro por doce</h3></div>'+table+'</div>' +
     '<div class="dash-grid">' + dashPanel('Onde vai cada real do preço', 'scale',
       '<p class="hint" style="margin:-4px 0 14px">Pra que serve: ver de relance quais doces têm gordura pra cortar no preço e quais já estão no talo.</p>' + bars) + '</div>';
