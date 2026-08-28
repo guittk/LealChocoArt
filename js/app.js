@@ -3329,6 +3329,26 @@ function pageFinanceMetas(){
 
   var isRitmoMode = g.goalMode === 'ritmo';
   var sp = isRitmoMode ? computeSingleProductProjection() : null;
+  var mix = computeMixScenario();
+  var selectedProduct = isRitmoMode ? null : (getProduct(state.metasGoalProductId) || (results[0] && results[0].product));
+  var selectedRes = selectedProduct ? results.filter(function(r){ return r.product.id === selectedProduct.id; })[0] : null;
+
+  /* Lucro e Faturamento seguem o mesmo padrão de Vendas Diárias: primeiro
+     escolhe o doce (ou o mix), dentro do mesmo card da meta — depois os
+     blocos de resultado aparecem direto embaixo, sem parágrafo
+     explicando a conta. */
+  var doceOuMixPicker = (mixMode
+    ? (!mix ? '<p class="empty-note">Cadastre um doce primeiro.</p>' :
+      '<div class="fin-grid-3">' +
+        mix.shares.map(function(s){
+          return '<div class="field" style="margin:0"><label for="mx-'+s.product.id+'">'+esc(s.product.name)+' (%)</label>' +
+            '<input class="input sm" id="mx-'+s.product.id+'" type="number" inputmode="numeric" min="0" max="100" step="5" value="'+(s.share||0)+'" data-action="setMixShare" data-id="'+s.product.id+'"></div>';
+        }).join('') +
+      '</div>')
+    : (!selectedProduct ? '<p class="empty-note">Cadastre um doce primeiro.</p>' :
+      '<div class="field"><label for="mg-produto">Doce</label><select class="input" id="mg-produto" data-action="setMetasGoalProduct">' +
+        state.products.filter(function(p){ return !isHidden(p); }).map(function(p){ return '<option value="'+p.id+'"'+(p.id===selectedProduct.id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('') +
+      '</select></div>'));
 
   var form = '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('sparkle',18,'var(--brand)')+'<h3 style="flex:1">O que você quer alcançar</h3></div>' +
@@ -3359,6 +3379,11 @@ function pageFinanceMetas(){
           : '<div class="field"><label for="g-lucro">Lucro desejado no mês (R$)</label><input class="input" id="g-lucro" type="number" inputmode="decimal" step="50" value="'+(g.profitGoal||0)+'" data-action="setGoalProfit"></div>') +
         '<div class="field"><label for="g-dias">Dias trabalhados por semana</label><input class="input" id="g-dias" type="number" inputmode="numeric" min="1" max="7" step="1" value="'+(g.daysPerWeek||0)+'" data-action="setGoalDays"></div>' +
       '</div>') +
+
+    (isRitmoMode ? '' :
+      '<div class="admin-card-head" style="margin-top:20px">'+icon('scale',16,'var(--brand)')+'<h3 style="flex:1;font-size:15px">Vendendo qual doce</h3>' +
+        toggleChip('Usar mix', mixMode, 'toggleUseMix') + '</div>' +
+      doceOuMixPicker) +
   '</div>';
 
   /* Custo fixo e MEI valem pra qualquer um dos 3 modos acima — não são
@@ -3392,32 +3417,6 @@ function pageFinanceMetas(){
       statTile('Meta de lucro', currency(monthlyProfitTarget()), 'coin', 'brand') +
       statTile('Lucro total necessário', currency(monthlyOverhead()+monthlyProfitTarget()), 'chart', 'pos', 'é isso que as vendas precisam gerar') +
     '</div>';
-
-  /* Lucro e Faturamento seguem o mesmo padrão de Vendas Diárias: primeiro
-     escolhe o doce (ou o mix), depois os blocos de resultado aparecem
-     direto embaixo, sem parágrafo explicando a conta. */
-  var mix = computeMixScenario();
-  var selectedProduct = isRitmoMode ? null : (getProduct(state.metasGoalProductId) || (results[0] && results[0].product));
-  var selectedRes = selectedProduct ? results.filter(function(r){ return r.product.id === selectedProduct.id; })[0] : null;
-
-  var pickerCard = isRitmoMode ? '' : '<div class="admin-card">' +
-    '<div class="admin-card-head">'+icon('scale',18,'var(--brand)')+'<h3 style="flex:1">Vendendo qual doce</h3>' +
-      toggleChip('Usar mix', mixMode, 'toggleUseMix') + '</div>' +
-    (mixMode
-      ? (!mix ? '<p class="empty-note">Cadastre um doce primeiro.</p>' :
-        '<div class="fin-grid-3" style="margin-bottom:14px">' +
-          mix.shares.map(function(s){
-            return '<div class="field" style="margin:0"><label for="mx-'+s.product.id+'">'+esc(s.product.name)+' (%)</label>' +
-              '<input class="input sm" id="mx-'+s.product.id+'" type="number" inputmode="numeric" min="0" max="100" step="5" value="'+(s.share||0)+'" data-action="setMixShare" data-id="'+s.product.id+'"></div>';
-          }).join('') +
-        '</div>')
-      : (!selectedProduct ? '<p class="empty-note">Cadastre um doce primeiro.</p>' :
-        '<div class="field"><label for="mg-produto">Doce</label><select class="input" id="mg-produto" data-action="setMetasGoalProduct">' +
-          state.products.filter(function(p){ return !isHidden(p); }).map(function(p){ return '<option value="'+p.id+'"'+(p.id===selectedProduct.id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('') +
-        '</select></div>')) +
-  '</div>';
-
-  var overheadIsZero = monthlyOverhead() <= 0;
 
   var resultCard = '';
   if (mixMode && mix){
@@ -3454,13 +3453,11 @@ function pageFinanceMetas(){
         : '';
       resultCard = '<div class="admin-card"><div class="admin-card-head">'+icon('cake',18,'var(--brand)')+'<h3 style="flex:1">'+esc(selectedProduct.name)+'</h3><span class="pill pill-lilac">'+currency(c.profit)+'/un</span></div>' +
         firstBuyBlock +
-        (overheadIsZero
-          ? '<div class="banner banner-info" style="margin-top:18px;margin-bottom:14px">'+icon('info',16)+'<span>Sem custo fixo nem MEI somando aqui, cada doce vendido já é lucro puro — não existe ponto de equilíbrio.</span></div>'
-          : '<p class="field-label" style="margin-top:18px">Para empatar</p><div class="stat-grid">' +
-              statTile('Por dia', unitsLabel(selectedRes.breakeven.unitsDay), 'sun') +
-              statTile('Por semana', unitsLabel(selectedRes.breakeven.unitsWeek), 'calendar') +
-              statTile('Por mês', unitsLabel(selectedRes.breakeven.unitsMonth), 'chart') +
-            '</div>') +
+        '<p class="field-label" style="margin-top:18px">Para empatar</p><div class="stat-grid">' +
+          statTile('Por dia', unitsLabel(selectedRes.breakeven.unitsDay), 'sun') +
+          statTile('Por semana', unitsLabel(selectedRes.breakeven.unitsWeek), 'calendar') +
+          statTile('Por mês', unitsLabel(selectedRes.breakeven.unitsMonth), 'chart') +
+        '</div>' +
         '<p class="field-label" style="margin-top:18px">Para bater a meta</p>' +
         '<div class="stat-grid">' +
           statTile('Por dia', unitsLabel(selectedRes.goal.unitsDay), 'sun', 'brand') +
@@ -3471,7 +3468,7 @@ function pageFinanceMetas(){
     }
   }
 
-  return overheadForm + form + overheadCard + pickerCard + resultCard;
+  return overheadForm + form + overheadCard + resultCard;
 }
 
 /* ---------- compras: comprar tudo do zero ---------- */
