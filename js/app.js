@@ -3455,7 +3455,7 @@ function pageFinanceMetas(){
             '</div>'
           : '';
         productBlock = firstBuyBlock +
-          '<p class="field-label" style="margin-top:18px">Para empatar vendendo <b>'+esc(selectedProduct.name)+'</b> ('+currency(c.profit)+'/un)</p><div class="stat-grid">' +
+          '<p class="field-label" style="margin-top:18px">Para pagar o que foi gasto na primeira compra</p><div class="stat-grid">' +
             statTile('Por dia', unitsLabel(selectedRes.breakeven.unitsDay), 'sun') +
             statTile('Por semana', unitsLabel(selectedRes.breakeven.unitsWeek), 'calendar') +
             statTile('Por mês', unitsLabel(selectedRes.breakeven.unitsMonth), 'chart') +
