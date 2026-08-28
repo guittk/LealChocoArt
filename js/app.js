@@ -3393,6 +3393,8 @@ function pageFinanceMetas(){
     '</div>' +
     '<p class="hint" style="margin:-6px 0 12px">Gás, energia, transporte até o ponto — o que sai todo mês independente de quanto você vende. Vale pros três modos acima, não só pra meta escolhida.</p>' +
     toggleChip('Considerar a taxa MEI no que preciso cobrir', !!g.includeTax, 'toggleGoalTax') +
+    '<div class="field" style="margin-top:14px"><label for="g-inicial">Custo inicial (R$)</label><input class="input" id="g-inicial" type="number" inputmode="decimal" step="10" value="'+(g.initialCost||0)+'" data-action="setGoalInitialCost"></div>' +
+    '<p class="hint" style="margin:6px 0 0">Equipamentos, utensílios, o que só se compra uma vez pra começar — soma direto no <b>Gasto na 1ª compra</b>, não no custo fixo mensal.</p>' +
   '</div>';
 
   /* Todo o resultado — custo fixo, meta e o cenário do doce/mix — junto
@@ -3446,19 +3448,24 @@ function pageFinanceMetas(){
         productBlock = '<div class="banner banner-danger" style="margin-top:14px">'+icon('alert',16)+'<span>Lucro por unidade de <b>'+esc(selectedProduct.name)+'</b> é '+currency(c.profit)+'. Nenhuma quantidade fecha a conta — ajuste preço ou custo em <b>Receitas</b>.</span></div>';
       } else {
         var fp = firstPurchaseIngredients(selectedProduct);
-        var hasFirstBuy = fp.rows.length && fp.totalFull > 0;
+        /* Custo inicial (equipamentos, utensílios — só se compra uma vez)
+           soma no gasto da 1ª compra junto com os potes de ingrediente,
+           mesmo pra doce sem receita cadastrada ainda. */
+        var initialCost = Number(g.initialCost) || 0;
+        var totalFirstBuy = fp.totalFull + initialCost;
+        var hasFirstBuy = (fp.rows.length && fp.totalFull > 0) || initialCost > 0;
         var firstBuyBlock = !hasFirstBuy ? '' :
-          '<p class="field-label" style="margin-top:18px">Comprando os ingredientes do zero (potes inteiros)</p>' +
+          '<p class="field-label" style="margin-top:18px">Comprando os ingredientes do zero (potes inteiros)'+(initialCost>0?' + custo inicial':'')+'</p>' +
           '<div class="stat-grid">' +
-            statTile('Gasto na 1ª compra', currency(fp.totalFull), 'cart', 'neg') +
-            statTile('Vender para reaver', fp.unitsToRecover ? unitsLabel(fp.unitsToRecover) : '—', 'coin', 'brand') +
+            statTile('Gasto na 1ª compra', currency(totalFirstBuy), 'cart', 'neg') +
+            statTile('Vender para reaver', (fp.sellPrice > 0 && totalFirstBuy > 0) ? unitsLabel(Math.ceil(totalFirstBuy / fp.sellPrice - 1e-9)) : '—', 'coin', 'brand') +
             statTile('Rende nesta fornada', unitsLabel(fp.packagesFromBatch), 'cake') +
           '</div>';
         /* "Vender para reaver" é o total pra zerar a conta, não importa o
            prazo — o que muda com o prazo é o RITMO diário necessário pra
            chegar lá dentro de 1 dia, 1 semana ou 1 mês. */
         var recoverPaceBlock = !hasFirstBuy ? '' : (function(){
-          var exactUnits = fp.sellPrice > 0 ? fp.totalFull / fp.sellPrice : 0;
+          var exactUnits = fp.sellPrice > 0 ? totalFirstBuy / fp.sellPrice : 0;
           var daysPerWeek = Number(g.daysPerWeek) || 0;
           var activeDaysMonth = daysPerWeek > 0 ? daysPerWeek * WEEKS_PER_MONTH : 30;
           return '<p class="field-label" style="margin-top:18px">Ritmo pra pagar o que foi gasto na primeira compra</p><div class="stat-grid">' +
@@ -4921,6 +4928,7 @@ document.addEventListener('change', function(e){
   else if (action === 'setGoalDays') { state.financialGoals.daysPerWeek = clamp(Number(el.value) || 0, 0, 7); saveGoals(); render(); }
   else if (action === 'setGoalMeiFee') { state.financialGoals.meiMonthlyFee = Number(el.value) || 0; saveGoals(); render(); }
   else if (action === 'setGoalFixed') { state.financialGoals.fixedMonthlyCost = Number(el.value) || 0; saveGoals(); render(); }
+  else if (action === 'setGoalInitialCost') { state.financialGoals.initialCost = Number(el.value) || 0; saveGoals(); render(); }
   else if (action === 'setMixShare') { state.financialGoals.mix = state.financialGoals.mix || {}; state.financialGoals.mix[el.dataset.id] = Number(el.value) || 0; saveGoals(); render(); }
   else if (action === 'setPlanQty') { state.planQty[el.dataset.id] = Number(el.value) || 0; render(); }
   else if (action === 'setConsumptionRate') { state.consumptionRate[el.dataset.id] = Math.max(0, Number(el.value) || 0); render(); }
