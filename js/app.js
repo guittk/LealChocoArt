@@ -216,6 +216,7 @@ var state = {
   addingPackaging: false,
   metasSingleProductId: null,
   metasSingleQty: 5,
+  metasGoalProductId: null,
   lossDraft: null,        /* rascunho da perda em edição: { productId, batches, date, note, includeLabor, includePackaging, lostIngredientIds } */
   confirmDialog: null,          /* { title, text, danger, action, payload } */
   priceChangeModal: null,
@@ -3333,9 +3334,9 @@ function pageFinanceMetas(){
     '<div class="admin-card-head">'+icon('sparkle',18,'var(--brand)')+'<h3 style="flex:1">O que você quer alcançar</h3></div>' +
 
     '<div class="field"><span class="field-label">Sua meta é…</span><div class="seg">' +
-      '<button type="button" class="seg-btn'+(g.goalMode!=='faturamento'&&g.goalMode!=='ritmo'?' on':'')+'" data-action="setGoalMode" data-mode="lucro">'+icon('coin',15)+' Lucro que quero no bolso</button>' +
-      '<button type="button" class="seg-btn'+(g.goalMode==='faturamento'?' on':'')+'" data-action="setGoalMode" data-mode="faturamento">'+icon('chart',15)+' Faturamento no mês</button>' +
-      '<button type="button" class="seg-btn'+(g.goalMode==='ritmo'?' on':'')+'" data-action="setGoalMode" data-mode="ritmo">'+icon('sun',15)+' Lucro por vendas diárias</button>' +
+      '<button type="button" class="seg-btn'+(g.goalMode!=='faturamento'&&g.goalMode!=='ritmo'?' on':'')+'" data-action="setGoalMode" data-mode="lucro">'+icon('coin',15)+' Lucro</button>' +
+      '<button type="button" class="seg-btn'+(g.goalMode==='faturamento'?' on':'')+'" data-action="setGoalMode" data-mode="faturamento">'+icon('chart',15)+' Faturamento</button>' +
+      '<button type="button" class="seg-btn'+(g.goalMode==='ritmo'?' on':'')+'" data-action="setGoalMode" data-mode="ritmo">'+icon('sun',15)+' Vendas Diárias</button>' +
     '</div>' +
     '<p class="hint">'+(g.goalMode==='faturamento'
       ? 'Faturamento é tudo que entra. Convertemos para lucro usando a margem média dos seus doces ('+(averageMarginRatio()*100).toFixed(0)+'%).'
@@ -3392,103 +3393,85 @@ function pageFinanceMetas(){
       statTile('Lucro total necessário', currency(monthlyOverhead()+monthlyProfitTarget()), 'chart', 'pos', 'é isso que as vendas precisam gerar') +
     '</div>';
 
-  /* cenário de mix */
+  /* Lucro e Faturamento seguem o mesmo padrão de Vendas Diárias: primeiro
+     escolhe o doce (ou o mix), depois os blocos de resultado aparecem
+     direto embaixo, sem parágrafo explicando a conta. */
   var mix = computeMixScenario();
-  var mixCard = isRitmoMode ? '' : '<div class="admin-card">' +
-    '<div class="admin-card-head">'+icon('scale',18,'var(--brand)')+'<h3 style="flex:1">Vendendo mais de um doce</h3>' +
+  var selectedProduct = isRitmoMode ? null : (getProduct(state.metasGoalProductId) || (results[0] && results[0].product));
+  var selectedRes = selectedProduct ? results.filter(function(r){ return r.product.id === selectedProduct.id; })[0] : null;
+
+  var pickerCard = isRitmoMode ? '' : '<div class="admin-card">' +
+    '<div class="admin-card-head">'+icon('scale',18,'var(--brand)')+'<h3 style="flex:1">Vendendo qual doce</h3>' +
       toggleChip('Usar mix', mixMode, 'toggleUseMix') + '</div>' +
-    '<p class="hint" style="margin:-10px 0 14px">Na vida real você não vende só um produto. Diga a proporção estimada de cada doce nas suas vendas e veja quanto precisa vender no total.</p>' +
-    (mixMode && mix
-      ? '<div class="fin-grid-3" style="margin-bottom:14px">' +
+    (mixMode
+      ? (!mix ? '<p class="empty-note">Cadastre um doce primeiro.</p>' :
+        '<div class="fin-grid-3" style="margin-bottom:14px">' +
           mix.shares.map(function(s){
             return '<div class="field" style="margin:0"><label for="mx-'+s.product.id+'">'+esc(s.product.name)+' (%)</label>' +
               '<input class="input sm" id="mx-'+s.product.id+'" type="number" inputmode="numeric" min="0" max="100" step="5" value="'+(s.share||0)+'" data-action="setMixShare" data-id="'+s.product.id+'"></div>';
           }).join('') +
-        '</div>' +
-        (mix.unitsMonth != null
-          ? '<div class="stat-grid">' +
-              statTile('Por dia', unitsLabel(mix.unitsDay), 'sun') +
-              statTile('Por semana', unitsLabel(mix.unitsWeek), 'calendar') +
-              statTile('Por mês', unitsLabel(mix.unitsMonth), 'chart', 'brand', currency(mix.revenueMonth)+' de faturamento') +
-            '</div>' +
-            '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Doce</th><th class="n">Fatia</th><th class="n">Un./dia</th><th class="n">Un./mês</th><th class="n">Lucro un.</th></tr></thead><tbody>' +
-            mix.shares.map(function(s){
-              var c = recipeCosts(s.product);
-              return '<tr><td class="k">'+esc(s.product.name)+'</td><td class="n">'+s.pct.toFixed(0)+'%</td>' +
-                '<td class="n">'+unitsLabel(s.unitsDay)+'</td>' +
-                '<td class="n">'+s.unitsMonth+'</td><td class="n">'+currency(c.profit)+'</td></tr>';
-            }).join('') + '</tbody></table></div>' +
-            '<p class="hint">Lucro médio por unidade nesse mix: <b>'+currency(mix.blendedProfit)+'</b>.</p>'
-          : '<div class="banner banner-danger">'+icon('alert',16)+'<span>Com esse mix o lucro médio por unidade é zero ou negativo. Ajuste preços ou custos.</span></div>')
-      : '<p class="empty-note">Marque "Usar mix" para calcular considerando vários doces ao mesmo tempo.</p>') +
+        '</div>')
+      : (!selectedProduct ? '<p class="empty-note">Cadastre um doce primeiro.</p>' :
+        '<div class="field"><label for="mg-produto">Doce</label><select class="input" id="mg-produto" data-action="setMetasGoalProduct">' +
+          state.products.filter(function(p){ return !isHidden(p); }).map(function(p){ return '<option value="'+p.id+'"'+(p.id===selectedProduct.id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('') +
+        '</select></div>')) +
   '</div>';
 
-  /* por produto isolado */
   var overheadIsZero = monthlyOverhead() <= 0;
-  var cards = results.map(function(res){
-    var p = res.product, c = res.costs;
+
+  var resultCard = '';
+  if (mixMode && mix){
+    resultCard = mix.unitsMonth != null
+      ? '<div class="admin-card">' +
+          '<div class="stat-grid">' +
+            statTile('Por dia', unitsLabel(mix.unitsDay), 'sun') +
+            statTile('Por semana', unitsLabel(mix.unitsWeek), 'calendar') +
+            statTile('Por mês', unitsLabel(mix.unitsMonth), 'chart', 'brand', currency(mix.revenueMonth)+' de faturamento') +
+            statTile('Lucro médio/un', currency(mix.blendedProfit), 'coin', mix.blendedProfit>0?'pos':'neg') +
+          '</div>' +
+          '<div class="tbl-wrap" style="margin-top:14px"><table class="tbl"><thead><tr><th>Doce</th><th class="n">Fatia</th><th class="n">Un./dia</th><th class="n">Un./mês</th><th class="n">Lucro un.</th></tr></thead><tbody>' +
+          mix.shares.map(function(s){
+            var c = recipeCosts(s.product);
+            return '<tr><td class="k">'+esc(s.product.name)+'</td><td class="n">'+s.pct.toFixed(0)+'%</td>' +
+              '<td class="n">'+unitsLabel(s.unitsDay)+'</td>' +
+              '<td class="n">'+s.unitsMonth+'</td><td class="n">'+currency(c.profit)+'</td></tr>';
+          }).join('') + '</tbody></table></div>' +
+        '</div>'
+      : '<div class="banner banner-danger">'+icon('alert',16)+'<span>Com esse mix o lucro médio por unidade é zero ou negativo. Ajuste preços ou custos.</span></div>';
+  } else if (!mixMode && selectedRes){
+    var c = selectedRes.costs;
     if (c.profit <= 0){
-      return '<div class="admin-card"><div class="admin-card-head">'+icon('cake',18,'var(--brand)')+'<h3 style="flex:1">'+esc(p.name)+'</h3></div>' +
-        '<div class="banner banner-danger" style="margin:0">'+icon('alert',16)+'<span>Lucro por unidade é '+currency(c.profit)+'. Nenhuma quantidade fecha a conta — ajuste preço ou custo em <b>Receitas</b>.</span></div></div>';
-    }
-    /* Sem custo fixo nem MEI cadastrados, o ponto de equilíbrio é
-       matematicamente 0 — cada doce já sai vendido cobrindo o próprio
-       ingrediente, então não há "meta de sobrevivência" para calcular.
-       Mostrar "0 un / R$0,00 de ingredientes" nesse caso parecia bug:
-       trocamos por uma explicação em vez do quadro de números. */
-    var breakevenBlock = overheadIsZero
-      ? '<div class="banner banner-info" style="margin-bottom:0;margin-top:18px">'+icon('info',16)+
-        '<span>Você não tem custo fixo nem taxa MEI somando aqui'+(state.financialGoals.includeTax?'':' (a opção "considerar a taxa MEI" está desmarcada)')+'. Sem isso para cobrir, cada doce vendido já é lucro puro — não existe uma quantidade mínima para "empatar". Preencha custo fixo mensal e/ou marque a MEI acima para calcular um ponto de equilíbrio de verdade.</span></div>'
-      : '<p class="field-label" style="margin-top:18px">Para empatar — cobrindo ingredientes, embalagem'+(c.laborPerPackage>0?', mão de obra':'')+', custo fixo'+(state.financialGoals.includeTax?' e MEI':'')+'</p>' +
-      '<div class="stat-grid">' +
-        statTile('Por dia', unitsLabel(res.breakeven.unitsDay), 'sun') +
-        statTile('Por semana', unitsLabel(res.breakeven.unitsWeek), 'calendar') +
-        statTile('Por mês', unitsLabel(res.breakeven.unitsMonth), 'chart') +
-      '</div>' +
-      (res.breakeven.unitsMonth ? '<p class="hint" style="margin-top:8px">Nessas '+res.breakeven.unitsMonth+' un/mês entram <b>'+currency(res.breakeven.revenueMonth)+'</b>, que pagam <b>'+currency(res.breakeven.materialMonth)+'</b> de ingredientes e embalagem'+(c.laborPerPackage>0?' e mão de obra':'')+' mais <b>'+currency(res.breakeven.overheadMonth)+'</b> de custo fixo'+(state.financialGoals.includeTax?' e MEI':'')+'. Sobra zero — é o ponto de equilíbrio.</p>' : '');
-
-    /* "comprei tudo pela primeira vez, quanto preciso vender para
-       reaver esse dinheiro" — pergunta de caixa, não de meta mensal */
-    var fp = firstPurchaseIngredients(p);
-    var firstBuyBlock = '';
-    if (fp.rows.length && fp.totalFull > 0){
-      firstBuyBlock =
-        '<p class="field-label">Comprando os ingredientes do zero (potes inteiros)</p>' +
+      resultCard = '<div class="banner banner-danger">'+icon('alert',16)+'<span>Lucro por unidade é '+currency(c.profit)+'. Nenhuma quantidade fecha a conta — ajuste preço ou custo em <b>Receitas</b>.</span></div>';
+    } else {
+      var fp = firstPurchaseIngredients(selectedProduct);
+      var firstBuyBlock = (fp.rows.length && fp.totalFull > 0)
+        ? '<p class="field-label">Comprando os ingredientes do zero (potes inteiros)</p>' +
+          '<div class="stat-grid">' +
+            statTile('Gasto na 1ª compra', currency(fp.totalFull), 'cart', 'neg') +
+            statTile('Vender para reaver', fp.unitsToRecover ? unitsLabel(fp.unitsToRecover) : '—', 'coin', 'brand') +
+            statTile('Rende nesta fornada', unitsLabel(fp.packagesFromBatch), 'cake') +
+          '</div>'
+        : '';
+      resultCard = '<div class="admin-card"><div class="admin-card-head">'+icon('cake',18,'var(--brand)')+'<h3 style="flex:1">'+esc(selectedProduct.name)+'</h3><span class="pill pill-lilac">'+currency(c.profit)+'/un</span></div>' +
+        firstBuyBlock +
+        (overheadIsZero
+          ? '<div class="banner banner-info" style="margin-top:18px;margin-bottom:14px">'+icon('info',16)+'<span>Sem custo fixo nem MEI somando aqui, cada doce vendido já é lucro puro — não existe ponto de equilíbrio.</span></div>'
+          : '<p class="field-label" style="margin-top:18px">Para empatar</p><div class="stat-grid">' +
+              statTile('Por dia', unitsLabel(selectedRes.breakeven.unitsDay), 'sun') +
+              statTile('Por semana', unitsLabel(selectedRes.breakeven.unitsWeek), 'calendar') +
+              statTile('Por mês', unitsLabel(selectedRes.breakeven.unitsMonth), 'chart') +
+            '</div>') +
+        '<p class="field-label" style="margin-top:18px">Para bater a meta</p>' +
         '<div class="stat-grid">' +
-          statTile('Gasto na 1ª compra', currency(fp.totalFull), 'cart', 'neg', 'ingredientes desta receita, em potes cheios') +
-          statTile('Vender para reaver', fp.unitsToRecover ? unitsLabel(fp.unitsToRecover) : '—', 'coin', 'brand', 'ao preço de '+currency(fp.sellPrice)) +
-          statTile('Rende nesta fornada', unitsLabel(fp.packagesFromBatch), 'cake') +
+          statTile('Por dia', unitsLabel(selectedRes.goal.unitsDay), 'sun', 'brand') +
+          statTile('Por semana', unitsLabel(selectedRes.goal.unitsWeek), 'calendar', 'brand') +
+          statTile('Por mês', unitsLabel(selectedRes.goal.unitsMonth), 'chart', 'brand', selectedRes.goal.revenueMonth!=null?currency(selectedRes.goal.revenueMonth)+' de faturamento':'') +
         '</div>' +
-        (fp.coveredByFirstBatch
-          ? '<p class="hint" style="margin-top:8px">Essa fornada sozinha (<b>'+unitsLabel(fp.packagesFromBatch)+'</b>) já cobre os <b>'+currency(fp.totalFull)+'</b> gastos nos potes — vendendo <b>'+fp.unitsToRecover+'</b> você reaveu o dinheiro, e as <b>'+fp.leftoverUnits+' un</b> restantes já são só lucro (sem contar embalagem, mão de obra e custo fixo).</p>'
-          : (fp.unitsToRecover
-              ? '<p class="hint" style="margin-top:8px">Essa fornada rende só <b>'+unitsLabel(fp.packagesFromBatch)+'</b>, mas você precisa vender <b>'+fp.unitsToRecover+'</b> para reaver os <b>'+currency(fp.totalFull)+'</b> gastos — sobra dos potes para as próximas fornadas, então o valor não é perdido, só não volta tudo numa fornada só.</p>'
-              : '')) +
-        '<p class="hint" style="margin-top:4px">Conta só sobre os potes de ingrediente — embalagem, mão de obra e custo fixo entram nos quadros abaixo.</p>';
+      '</div>';
     }
+  }
 
-    return '<div class="admin-card">' +
-      '<div class="admin-card-head">'+icon('cake',18,'var(--brand)')+'<h3 style="flex:1">'+esc(p.name)+'</h3>' +
-        '<span class="pill pill-lilac">'+currency(c.profit)+'/un</span></div>' +
-      firstBuyBlock +
-      breakevenBlock +
-      '<p class="field-label" style="margin-top:18px">Para bater a meta de lucro</p>' +
-      '<div class="stat-grid">' +
-        statTile('Por dia', unitsLabel(res.goal.unitsDay), 'sun', 'brand') +
-        statTile('Por semana', unitsLabel(res.goal.unitsWeek), 'calendar', 'brand') +
-        statTile('Por mês', unitsLabel(res.goal.unitsMonth), 'chart', 'brand', res.goal.revenueMonth!=null?currency(res.goal.revenueMonth)+' de faturamento':'') +
-      '</div>' +
-      (res.goal.unitsMonth != null
-        ? '<p class="hint" style="margin-top:8px">Receita de <b>'+currency(res.goal.revenueMonth)+'</b> − <b>'+currency(res.goal.materialMonth)+'</b> de insumos − <b>'+currency(res.goal.overheadMonth)+'</b> de custo fixo = <b>'+currency(monthlyProfitTarget())+'</b> no bolso.</p>'
-        : '') +
-      '<p class="hint" style="margin-top:10px">Considerando vender <b>somente</b> este doce. Para uma conta realista use o mix acima.</p>' +
-    '</div>';
-  }).join('');
-
-  var cenarioPorDoce = isRitmoMode ? '' :
-    '<p class="field-label" style="margin:26px 0 12px">Cenário por doce</p>' + cards;
-
-  return overheadForm + form + overheadCard + mixCard + cenarioPorDoce;
+  return overheadForm + form + overheadCard + pickerCard + resultCard;
 }
 
 /* ---------- compras: comprar tudo do zero ---------- */
@@ -4935,6 +4918,7 @@ document.addEventListener('change', function(e){
   else if (action === 'setConsumptionRate') { state.consumptionRate[el.dataset.id] = Math.max(0, Number(el.value) || 0); render(); }
   else if (action === 'setRestockPacks') { state.restockPacks[el.dataset.key] = Math.max(1, Math.floor(Number(el.value) || 1)); render(); }
   else if (action === 'setMetasSingleProduct') { state.metasSingleProductId = el.value; render(); }
+  else if (action === 'setMetasGoalProduct') { state.metasGoalProductId = el.value; render(); }
 
   /* perdas */
   else if (action === 'setLossDraftProduct') {
