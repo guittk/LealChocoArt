@@ -3458,15 +3458,18 @@ function pageFinanceMetas(){
            - Custo inicial (equipamento, utensílio): não é consumido a
              cada fornada, então o que sobra pra "pagar" ele é o LUCRO de
              cada venda, não o faturamento bruto. */
+        /* Mesma lógica de "Para bater a meta": o total pra recuperar em 1
+           mês é UM SÓ número, só que fatiado em 3 janelas (dia/semana/mês)
+           — não são 3 metas diferentes, é a mesma meta mensal vista em
+           ritmos diferentes. */
         function paceBlock(title, totalNeeded, perUnit){
           if (!(totalNeeded > 0) || !(perUnit > 0)) return '';
-          var exactUnits = totalNeeded / perUnit;
+          var exact = totalNeeded / perUnit;
           var daysPerWeek = Number(g.daysPerWeek) || 0;
-          var activeDaysMonth = daysPerWeek > 0 ? daysPerWeek * WEEKS_PER_MONTH : 30;
           return '<p class="field-label" style="margin-top:18px">'+title+'</p><div class="stat-grid">' +
-              statTile('Em 1 dia', unitsLabel(Math.ceil(exactUnits - 1e-9)), 'sun', '', 'vendendo tudo hoje') +
-              statTile('Em 1 semana', daysPerWeek > 0 ? unitsLabel(round1(exactUnits / daysPerWeek)) : '—', 'calendar', '', daysPerWeek > 0 ? 'por dia, até o fim da semana' : '') +
-              statTile('Em 1 mês', unitsLabel(round1(exactUnits / activeDaysMonth)), 'chart', '', 'por dia, até o fim do mês') +
+              statTile('Por dia', daysPerWeek > 0 ? unitsLabel(round1(exact / WEEKS_PER_MONTH / daysPerWeek)) : '—', 'sun') +
+              statTile('Por semana', unitsLabel(round1(exact / WEEKS_PER_MONTH)), 'calendar') +
+              statTile('Por mês', unitsLabel(Math.ceil(exact - 1e-9)), 'chart', 'brand') +
             '</div>';
         }
 
@@ -3478,7 +3481,7 @@ function pageFinanceMetas(){
             statTile('Vender para reaver', fp.sellPrice > 0 ? unitsLabel(Math.ceil(fp.totalFull / fp.sellPrice - 1e-9)) : '—', 'coin', 'brand') +
             statTile('Rende nesta fornada', unitsLabel(fp.packagesFromBatch), 'cake') +
           '</div>' +
-          paceBlock('Ritmo pra pagar o gasto da primeira compra (faturamento)', fp.totalFull, fp.sellPrice);
+          paceBlock('Ritmo pra pagar o gasto da primeira compra em 1 mês (faturamento)', fp.totalFull, fp.sellPrice);
 
         var initialCostBlock = !(initialCost > 0) ? '' :
           '<p class="field-label" style="margin-top:18px">Custo inicial (equipamentos, utensílios)</p>' +
@@ -3486,7 +3489,7 @@ function pageFinanceMetas(){
             statTile('Custo inicial', currency(initialCost), 'cart', 'neg') +
             statTile('Vender para reaver', unitsLabel(Math.ceil(initialCost / c.profit - 1e-9)), 'coin', 'brand') +
           '</div>' +
-          paceBlock('Ritmo pra pagar o custo inicial (lucro)', initialCost, c.profit);
+          paceBlock('Ritmo pra pagar o custo inicial em 1 mês (lucro)', initialCost, c.profit);
 
         productBlock = firstBuyBlock + initialCostBlock +
           '<p class="field-label" style="margin-top:18px">Para bater a meta</p>' +
