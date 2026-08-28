@@ -3326,6 +3326,8 @@ function pageFinanceMetas(){
   var results = computeSalesGoals();
   var mixMode = !!g.useMix;
   var isRitmoMode = g.goalMode === 'ritmo';
+  var isCustoInicialMode = g.goalMode === 'custoinicial';
+  var isMoneyGoalMode = !isRitmoMode && !isCustoInicialMode;
 
   var prods = state.products.filter(function(p){ return !isHidden(p); });
   var selectedProduct = getProduct(state.metasGoalProductId) || prods[0];
@@ -3333,9 +3335,9 @@ function pageFinanceMetas(){
   var mix = computeMixScenario();
   var sp = isRitmoMode ? computeSingleProductProjection() : null;
 
-  /* Doce e dias trabalhados valem pros 3 modos (Lucro/Faturamento/Vendas
-     Diárias) — por isso ficam acima do seletor de meta, em vez de
-     duplicados dentro de cada modo. */
+  /* Doce e dias trabalhados valem pros 4 modos (Lucro/Faturamento/Vendas
+     Diárias/Custo inicial) — por isso ficam acima do seletor de meta, em
+     vez de duplicados dentro de cada modo. */
   var sharedFields = !prods.length ? '<p class="empty-note">Cadastre um doce primeiro.</p>' :
     '<div class="fin-grid-2">' +
       '<div class="field"><label for="mg-produto">Doce</label><select class="input" id="mg-produto" data-action="setMetasGoalProduct">' +
@@ -3346,14 +3348,18 @@ function pageFinanceMetas(){
 
   var modeField = isRitmoMode
     ? (!sp ? '' : '<div class="field"><label for="ms-qtd">Quantos por dia</label><input class="input" id="ms-qtd" type="number" inputmode="decimal" min="0" step="0.5" value="'+sp.qty+'" data-action="setMetasSingleQty"></div>')
+    : isCustoInicialMode
+    ? '<div class="field"><label for="g-inicial">Custo inicial (R$)</label><input class="input" id="g-inicial" type="number" inputmode="decimal" step="10" value="'+(g.initialCost||0)+'" data-action="setGoalInitialCost"></div>'
     : '<div class="field">' + (g.goalMode === 'faturamento'
         ? '<label for="g-fat">Faturamento desejado no mês (R$)</label><input class="input" id="g-fat" type="number" inputmode="decimal" step="50" value="'+(g.monthlyGoal||0)+'" data-action="setGoalMonthly">'
         : '<label for="g-lucro">Lucro desejado no mês (R$)</label><input class="input" id="g-lucro" type="number" inputmode="decimal" step="50" value="'+(g.profitGoal||0)+'" data-action="setGoalProfit">') +
       '</div>';
 
   /* Mix (vender vários doces ao mesmo tempo) só existe pra Lucro e
-     Faturamento — Vendas Diárias já é sobre um doce só, por definição. */
-  var mixBlock = isRitmoMode ? '' :
+     Faturamento — Vendas Diárias já é sobre um doce só, por definição, e
+     Custo inicial também: o gasto que se quer recuperar é de UM doce, o
+     que já se está vendendo. */
+  var mixBlock = !isMoneyGoalMode ? '' :
     toggleChip('Usar mix (considerar vários doces)', mixMode, 'toggleUseMix') +
     (mixMode && mix
       ? '<div class="fin-grid-3" style="margin-top:10px">' +
@@ -3368,34 +3374,50 @@ function pageFinanceMetas(){
     '<div class="admin-card-head">'+icon('sparkle',18,'var(--brand)')+'<h3 style="flex:1">O que você quer alcançar</h3></div>' +
     sharedFields +
     '<div class="field" style="margin-top:14px"><span class="field-label">Sua meta é…</span><div class="seg">' +
-      '<button type="button" class="seg-btn'+(g.goalMode!=='faturamento'&&g.goalMode!=='ritmo'?' on':'')+'" data-action="setGoalMode" data-mode="lucro">'+icon('coin',15)+' Lucro</button>' +
+      '<button type="button" class="seg-btn'+(isMoneyGoalMode && g.goalMode!=='faturamento'?' on':'')+'" data-action="setGoalMode" data-mode="lucro">'+icon('coin',15)+' Lucro</button>' +
       '<button type="button" class="seg-btn'+(g.goalMode==='faturamento'?' on':'')+'" data-action="setGoalMode" data-mode="faturamento">'+icon('chart',15)+' Faturamento</button>' +
-      '<button type="button" class="seg-btn'+(g.goalMode==='ritmo'?' on':'')+'" data-action="setGoalMode" data-mode="ritmo">'+icon('sun',15)+' Vendas Diárias</button>' +
+      '<button type="button" class="seg-btn'+(isRitmoMode?' on':'')+'" data-action="setGoalMode" data-mode="ritmo">'+icon('sun',15)+' Vendas Diárias</button>' +
+      '<button type="button" class="seg-btn'+(isCustoInicialMode?' on':'')+'" data-action="setGoalMode" data-mode="custoinicial">'+icon('cart',15)+' Custo inicial</button>' +
     '</div>' +
     '<p class="hint">'+(g.goalMode==='faturamento'
       ? 'Faturamento é tudo que entra. Convertemos para lucro usando a margem média dos seus doces ('+(averageMarginRatio()*100).toFixed(0)+'%).'
-      : g.goalMode==='ritmo'
+      : isRitmoMode
       ? 'Sem meta pra bater — só "se eu vender X de um doce por dia, quanto entra e quanto sobra".'
+      : isCustoInicialMode
+      ? 'Quanto vender do doce escolhido pra recuperar o que foi gasto pra começar — ingredientes da primeira fornada e equipamentos/utensílios.'
       : 'Lucro é o que sobra depois de pagar ingredientes, embalagem, mão de obra, custo fixo e imposto. É o número que importa.')+'</p></div>' +
     modeField +
     (mixBlock ? '<div style="margin-top:14px">'+mixBlock+'</div>' : '') +
   '</div>';
 
-  /* Custo fixo e MEI valem pra qualquer um dos 3 modos acima — não são
-     parte da "meta" escolhida, são do negócio inteiro. Por isso viraram
-     um card à parte, em vez de ficarem colados embaixo do seletor como
-     se pertencessem só ao modo selecionado. */
+  /* Custo fixo e MEI valem pra qualquer um dos modos de meta contínua
+     (Lucro/Faturamento/Vendas Diárias) — não são parte da "meta"
+     escolhida, são do negócio inteiro. Por isso viraram um card à
+     parte, em vez de ficarem colados embaixo do seletor. */
   var overheadForm = '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('wallet',18,'var(--brand)')+'<h3 style="flex:1">Custo fixo do negócio</h3></div>' +
     '<div class="fin-grid-2">' +
       '<div class="field"><label for="g-mei">Taxa MEI mensal (DAS)</label><input class="input" id="g-mei" type="number" inputmode="decimal" step="1" value="'+(g.meiMonthlyFee||0)+'" data-action="setGoalMeiFee"></div>' +
       '<div class="field"><label for="g-fixo">Custo fixo mensal (R$)</label><input class="input" id="g-fixo" type="number" inputmode="decimal" step="10" value="'+(g.fixedMonthlyCost||0)+'" data-action="setGoalFixed"></div>' +
     '</div>' +
-    '<p class="hint" style="margin:-6px 0 12px">Gás, energia, transporte até o ponto — o que sai todo mês independente de quanto você vende. Vale pros três modos acima, não só pra meta escolhida.</p>' +
+    '<p class="hint" style="margin:-6px 0 12px">Gás, energia, transporte até o ponto — o que sai todo mês independente de quanto você vende. Vale pros modos de meta acima, não só pra meta escolhida.</p>' +
     toggleChip('Considerar a taxa MEI no que preciso cobrir', !!g.includeTax, 'toggleGoalTax') +
-    '<div class="field" style="margin-top:14px"><label for="g-inicial">Custo inicial (R$)</label><input class="input" id="g-inicial" type="number" inputmode="decimal" step="10" value="'+(g.initialCost||0)+'" data-action="setGoalInitialCost"></div>' +
-    '<p class="hint" style="margin:6px 0 0">Equipamentos, utensílios, o que só se compra uma vez pra começar — não entra no custo fixo mensal nem no gasto com ingredientes, aparece separado no resultado, pago com o <b>lucro</b> das vendas.</p>' +
   '</div>';
+
+  /* Mesma lógica de "Para bater a meta": o total pra recuperar em 1 mês
+     é UM SÓ número, só que fatiado em 3 janelas (dia/semana/mês) — não
+     são 3 metas diferentes, é a mesma meta mensal vista em ritmos
+     diferentes. Usada só pelo modo Custo inicial. */
+  function paceBlock(title, totalNeeded, perUnit){
+    if (!(totalNeeded > 0) || !(perUnit > 0)) return '';
+    var exact = totalNeeded / perUnit;
+    var daysPerWeek = Number(g.daysPerWeek) || 0;
+    return '<p class="field-label" style="margin-top:18px">'+title+'</p><div class="stat-grid">' +
+        statTile('Por dia', daysPerWeek > 0 ? unitsLabel(round1(exact / WEEKS_PER_MONTH / daysPerWeek)) : '—', 'sun') +
+        statTile('Por semana', unitsLabel(round1(exact / WEEKS_PER_MONTH)), 'calendar') +
+        statTile('Por mês', unitsLabel(Math.ceil(exact - 1e-9)), 'chart', 'brand') +
+      '</div>';
+  }
 
   /* Todo o resultado — custo fixo, meta e o cenário do doce/mix — junto
      num card só, em seções separadas por field-label, em vez de
@@ -3415,6 +3437,48 @@ function pageFinanceMetas(){
         statTile('Lucro líquido no mês', currency(sp.profitMonth - monthlyOverhead()), 'coin', (sp.profitMonth - monthlyOverhead())>0?'pos':'neg') +
       '</div>' +
     '</div>';
+  } else if (isCustoInicialMode){
+    /* O ritmo pra pagar um gasto depende de que TIPO de gasto é:
+       - Ingredientes/embalagens da 1ª compra: esse dinheiro só volta
+         quando entra VENDA (faturamento) — usar lucro contaria o custo
+         do próprio ingrediente duas vezes (mesma lógica de
+         firstPurchaseIngredients()).
+       - Custo inicial (equipamento, utensílio): não é consumido a cada
+         fornada, então o que sobra pra "pagar" ele é o LUCRO de cada
+         venda, não o faturamento bruto. */
+    if (!selectedProduct){
+      resultsCard = '';
+    } else {
+      var c3 = selectedRes ? selectedRes.costs : recipeCosts(selectedProduct);
+      var fp = firstPurchaseIngredients(selectedProduct);
+      var initialCost = Number(g.initialCost) || 0;
+
+      var hasIngredientBuy = fp.rows.length && fp.totalFull > 0;
+      var firstBuyBlock = !hasIngredientBuy ? '' :
+        '<p class="field-label" style="margin-top:18px">Comprando os ingredientes do zero (potes inteiros)</p>' +
+        '<div class="stat-grid">' +
+          statTile('Gasto na 1ª compra', currency(fp.totalFull), 'cart', 'neg') +
+          statTile('Vender para reaver', fp.sellPrice > 0 ? unitsLabel(Math.ceil(fp.totalFull / fp.sellPrice - 1e-9)) : '—', 'coin', 'brand') +
+          statTile('Rende nesta fornada', unitsLabel(fp.packagesFromBatch), 'cake') +
+        '</div>' +
+        paceBlock('Ritmo pra pagar o gasto da primeira compra em 1 mês (faturamento)', fp.totalFull, fp.sellPrice);
+
+      var initialCostBlock = '';
+      if (initialCost > 0){
+        initialCostBlock = c3.profit <= 0
+          ? '<div class="banner banner-danger" style="margin-top:18px">'+icon('alert',16)+'<span>Lucro por unidade de <b>'+esc(selectedProduct.name)+'</b> é '+currency(c3.profit)+'. Não dá pra calcular quanto vender pra recuperar o custo inicial — ajuste preço ou custo em <b>Receitas</b>.</span></div>'
+          : '<p class="field-label" style="margin-top:18px">Custo inicial (equipamentos, utensílios)</p>' +
+            '<div class="stat-grid">' +
+              statTile('Custo inicial', currency(initialCost), 'cart', 'neg') +
+              statTile('Vender para reaver', unitsLabel(Math.ceil(initialCost / c3.profit - 1e-9)), 'coin', 'brand') +
+            '</div>' +
+            paceBlock('Ritmo pra pagar o custo inicial em 1 mês (lucro)', initialCost, c3.profit);
+      }
+
+      resultsCard = (!hasIngredientBuy && !(initialCost > 0))
+        ? '<div class="admin-card"><p class="empty-note">Cadastre a receita de <b>'+esc(selectedProduct.name)+'</b> e/ou preencha o custo inicial acima pra ver a conta aqui.</p></div>'
+        : '<div class="admin-card">' + firstBuyBlock + initialCostBlock + '</div>';
+    }
   } else {
     var overheadStats = '<div class="stat-grid">' +
         statTile('Custo fixo do mês', currency(monthlyOverhead()), 'wallet', '', 'custo fixo'+(g.includeTax?' + MEI':'')+' — os insumos saem de cada venda') +
@@ -3447,51 +3511,7 @@ function pageFinanceMetas(){
       if (c.profit <= 0){
         productBlock = '<div class="banner banner-danger" style="margin-top:14px">'+icon('alert',16)+'<span>Lucro por unidade de <b>'+esc(selectedProduct.name)+'</b> é '+currency(c.profit)+'. Nenhuma quantidade fecha a conta — ajuste preço ou custo em <b>Receitas</b>.</span></div>';
       } else {
-        var fp = firstPurchaseIngredients(selectedProduct);
-        var initialCost = Number(g.initialCost) || 0;
-
-        /* O ritmo pra pagar um gasto depende de que TIPO de gasto é:
-           - Ingredientes/embalagens da 1ª compra: esse dinheiro só volta
-             quando entra VENDA (faturamento) — usar lucro contaria o
-             custo do próprio ingrediente duas vezes (mesma lógica de
-             firstPurchaseIngredients()).
-           - Custo inicial (equipamento, utensílio): não é consumido a
-             cada fornada, então o que sobra pra "pagar" ele é o LUCRO de
-             cada venda, não o faturamento bruto. */
-        /* Mesma lógica de "Para bater a meta": o total pra recuperar em 1
-           mês é UM SÓ número, só que fatiado em 3 janelas (dia/semana/mês)
-           — não são 3 metas diferentes, é a mesma meta mensal vista em
-           ritmos diferentes. */
-        function paceBlock(title, totalNeeded, perUnit){
-          if (!(totalNeeded > 0) || !(perUnit > 0)) return '';
-          var exact = totalNeeded / perUnit;
-          var daysPerWeek = Number(g.daysPerWeek) || 0;
-          return '<p class="field-label" style="margin-top:18px">'+title+'</p><div class="stat-grid">' +
-              statTile('Por dia', daysPerWeek > 0 ? unitsLabel(round1(exact / WEEKS_PER_MONTH / daysPerWeek)) : '—', 'sun') +
-              statTile('Por semana', unitsLabel(round1(exact / WEEKS_PER_MONTH)), 'calendar') +
-              statTile('Por mês', unitsLabel(Math.ceil(exact - 1e-9)), 'chart', 'brand') +
-            '</div>';
-        }
-
-        var hasIngredientBuy = fp.rows.length && fp.totalFull > 0;
-        var firstBuyBlock = !hasIngredientBuy ? '' :
-          '<p class="field-label" style="margin-top:18px">Comprando os ingredientes do zero (potes inteiros)</p>' +
-          '<div class="stat-grid">' +
-            statTile('Gasto na 1ª compra', currency(fp.totalFull), 'cart', 'neg') +
-            statTile('Vender para reaver', fp.sellPrice > 0 ? unitsLabel(Math.ceil(fp.totalFull / fp.sellPrice - 1e-9)) : '—', 'coin', 'brand') +
-            statTile('Rende nesta fornada', unitsLabel(fp.packagesFromBatch), 'cake') +
-          '</div>' +
-          paceBlock('Ritmo pra pagar o gasto da primeira compra em 1 mês (faturamento)', fp.totalFull, fp.sellPrice);
-
-        var initialCostBlock = !(initialCost > 0) ? '' :
-          '<p class="field-label" style="margin-top:18px">Custo inicial (equipamentos, utensílios)</p>' +
-          '<div class="stat-grid">' +
-            statTile('Custo inicial', currency(initialCost), 'cart', 'neg') +
-            statTile('Vender para reaver', unitsLabel(Math.ceil(initialCost / c.profit - 1e-9)), 'coin', 'brand') +
-          '</div>' +
-          paceBlock('Ritmo pra pagar o custo inicial em 1 mês (lucro)', initialCost, c.profit);
-
-        productBlock = firstBuyBlock + initialCostBlock +
+        productBlock =
           '<p class="field-label" style="margin-top:18px">Para bater a meta</p>' +
           '<div class="stat-grid">' +
             statTile('Por dia', unitsLabel(selectedRes.goal.unitsDay), 'sun', 'brand') +
