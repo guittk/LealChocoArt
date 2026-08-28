@@ -3494,24 +3494,43 @@ function pageFinanceMetas(){
             paceBlock('Ritmo pra pagar o custo inicial em 1 mês (lucro)', initialCost, c3.profit);
       }
 
-      /* Total: soma em dinheiro é direta. Em unidades não dá pra somar
-         as duas — cada venda gera faturamento E lucro ao mesmo tempo,
-         então vender o suficiente pra cobrir o maior dos dois já cobre
-         o menor junto (não são filas separadas de vendas). */
+      /* Total: NÃO é soma nem máximo dos dois ritmos isolados — os dois
+         valores acima (faturamento pra ingrediente, lucro pra
+         equipamento) partem de bases diferentes e não dá pra somar
+         ritmos calculados em bases diferentes.
+
+         O jeito certo é olhar o caixa de verdade: os insumos da 1ª
+         fornada já estão pagos, então enquanto ela durar (até
+         `packagesFromBatch` unidades) CADA venda entra 100% livre —
+         o preço inteiro, não só o lucro — e paga os dois gastos juntos
+         (ingrediente + equipamento). Só se a soma dos dois for maior do
+         que essa fornada consegue cobrir é que sobra um resto, e esse
+         resto passa a depender de comprar insumo de novo — a partir
+         daí só o lucro por unidade é dinheiro livre. */
       var totalToStart = fp.totalFull + initialCost;
-      /* Exato (não arredondado) de cada meta — precisa ficar fracionário
-         até aqui, senão Por dia/Por semana calculam a partir de um Por
-         mês já arredondado pra cima e inflam o ritmo. Só a versão final
-         (unitsTotal) é arredondada pra cima, igual o paceBlock faz. */
-      var exactForIngredient = fp.sellPrice > 0 ? fp.totalFull / fp.sellPrice : 0;
-      var exactForInitial = (initialCost > 0 && c3.profit > 0) ? initialCost / c3.profit : 0;
-      var exactTotal = Math.max(exactForIngredient, exactForInitial);
+      var exactTotal = 0, impossible = false;
+      if (totalToStart > 0 && fp.sellPrice > 0){
+        if (hasIngredientBuy && totalToStart <= fp.packagesFromBatch * fp.sellPrice){
+          exactTotal = totalToStart / fp.sellPrice;
+        } else if (hasIngredientBuy && c3.profit > 0){
+          var remaining = totalToStart - fp.packagesFromBatch * fp.sellPrice;
+          exactTotal = fp.packagesFromBatch + remaining / c3.profit;
+        } else if (!hasIngredientBuy && c3.profit > 0){
+          exactTotal = totalToStart / c3.profit;
+        } else {
+          impossible = true;
+        }
+      }
       var unitsTotal = exactTotal > 0 ? Math.ceil(exactTotal - 1e-9) : 0;
+      var totalSub = impossible ? 'sem lucro por unidade, não dá pra recuperar vendendo mais'
+        : (hasIngredientBuy && exactTotal > 0 && exactTotal <= fp.packagesFromBatch
+          ? 'a própria fornada já cobre os dois'
+          : 'ingrediente + equipamento juntos');
       var totalBlock = !(totalToStart > 0) ? '' :
         '<p class="field-label" style="margin-top:18px">Total pra começar</p>' +
         '<div class="stat-grid">' +
           statTile('Gasto total', currency(totalToStart), 'cart', 'neg', 'ingredientes + custo inicial') +
-          statTile('Vender no total', unitsTotal > 0 ? unitsLabel(unitsTotal) : '—', 'coin', 'brand', 'o maior dos dois — cobre os dois juntos') +
+          statTile('Vender no total', unitsTotal > 0 ? unitsLabel(unitsTotal) : '—', 'coin', 'brand', totalSub) +
         '</div>' +
         (exactTotal > 0 ? (function(){
           var daysPerWeek = Number(g.daysPerWeek) || 0;
@@ -3520,7 +3539,7 @@ function pageFinanceMetas(){
               statTile('Por semana', unitsLabel(round1(exactTotal / WEEKS_PER_MONTH)), 'calendar') +
               statTile('Por mês', unitsLabel(unitsTotal), 'chart', 'brand') +
             '</div>';
-        })() : '');
+        })() : (impossible ? '<div class="banner banner-danger" style="margin-top:14px">'+icon('alert',16)+'<span>Depois de vender toda a 1ª fornada ainda falta recuperar dinheiro, mas o lucro por unidade de <b>'+esc(selectedProduct.name)+'</b> é '+currency(c3.profit)+'. Ajuste preço ou custo em <b>Receitas</b>.</span></div>' : ''));
 
       resultsCard = (!hasIngredientBuy && !(initialCost > 0))
         ? '<div class="admin-card"><p class="empty-note">Cadastre a receita de <b>'+esc(selectedProduct.name)+'</b> e/ou preencha o custo inicial acima pra ver a conta aqui.</p></div>'
