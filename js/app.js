@@ -178,7 +178,6 @@ var DEFAULT_GOALS = {
   includeTax: true,
   meiMonthlyFee: 76.90,
   fixedMonthlyCost: 0,    /* gás, energia, transporte… por mês */
-  laborHourCost: 0,       /* quanto vale 1h de produção */
   useMix: false,
   mix: {}                 /* { produtoId: percentual } */
 };
@@ -216,7 +215,7 @@ var state = {
   addingPackaging: false,
   metasSingleQty: 5,
   metasGoalProductId: null,
-  lossDraft: null,        /* rascunho da perda em edição: { productId, batches, date, note, includeLabor, includePackaging, lostIngredientIds } */
+  lossDraft: null,        /* rascunho da perda em edição: { productId, batches, date, note, includePackaging, lostIngredientIds } */
   confirmDialog: null,          /* { title, text, danger, action, payload } */
   priceChangeModal: null,
   historySelectedKeys: null,
@@ -497,15 +496,13 @@ function historyEntryUnitPrice(item, entry){
   return unitPriceValue(item, entry.price);
 }
 function ensureRecipe(p){
-  if (!p.recipe) p.recipe = { yieldQty:1, unitsPerPackage:1, ingredientUsage:[], packagingUsage:[], batchMinutes:0 };
+  if (!p.recipe) p.recipe = { yieldQty:1, unitsPerPackage:1, ingredientUsage:[], packagingUsage:[] };
   if (!p.recipe.ingredientUsage) p.recipe.ingredientUsage = [];
   if (!p.recipe.packagingUsage) p.recipe.packagingUsage = [];
-  if (p.recipe.batchMinutes === undefined) p.recipe.batchMinutes = 0;
   return p.recipe;
 }
 function recipeCosts(p){
   var r = ensureRecipe(p);
-  var g = state.financialGoals || {};
   var ingredientTotal = r.ingredientUsage.reduce(function(s,u){
     var ing = getIngredient(u.ingredientId); if (!ing) return s;
     return s + itemUnitCost(ing) * (Number(u.qty) || 0);
@@ -518,28 +515,20 @@ function recipeCosts(p){
   }, 0);
   var unitsPerPackage = Number(r.unitsPerPackage) || 1;
 
-  /* mão de obra: tempo do lote ÷ rendimento × custo/hora */
-  var hourCost = Number(g.laborHourCost) || 0;
-  var batchMin = Number(r.batchMinutes) || 0;
-  var laborPerUnit = (hourCost > 0 && batchMin > 0) ? (batchMin / 60 * hourCost) / yieldQty : 0;
-
   var materialPerUnit = costPerUnit + packagingPerUnit;
-  var finalCostPerUnit = materialPerUnit + laborPerUnit;
+  var finalCostPerUnit = materialPerUnit;
   var finalCostPerPackage = finalCostPerUnit * unitsPerPackage;
   var materialPerPackage = materialPerUnit * unitsPerPackage;
-  var laborPerPackage = laborPerUnit * unitsPerPackage;
   var sellPrice = Number(p.price) || 0;
   var profit = sellPrice - finalCostPerPackage;
-  var contribution = sellPrice - materialPerPackage;
   var marginPct = sellPrice > 0 ? (profit / sellPrice) * 100 : 0;
   var markup = finalCostPerPackage > 0 ? sellPrice / finalCostPerPackage : 0;
   return {
     ingredientTotal:ingredientTotal, yieldQty:yieldQty, costPerUnit:costPerUnit,
     packagingPerUnit:packagingPerUnit, unitsPerPackage:unitsPerPackage,
-    laborPerUnit:laborPerUnit, laborPerPackage:laborPerPackage,
     materialPerUnit:materialPerUnit, materialPerPackage:materialPerPackage,
     finalCostPerUnit:finalCostPerUnit, finalCostPerPackage:finalCostPerPackage,
-    sellPrice:sellPrice, profit:profit, contribution:contribution,
+    sellPrice:sellPrice, profit:profit,
     marginPct:marginPct, markup:markup
   };
 }
@@ -549,11 +538,11 @@ function recipeCosts(p){
    Nem tudo que entra na receita necessariamente estraga junto — às
    vezes só a massa foi perdida e a cobertura nem chegou a ser feita —
    por isso cada ingrediente pode ser marcado como perdido ou não
-   (`lostIngredientIds`), e mão de obra / embalagem entram à parte. */
-function lossBreakdown(productId, batches, lostIngredientIds, includeLabor, includePackaging){
+   (`lostIngredientIds`), e embalagem entra à parte. */
+function lossBreakdown(productId, batches, lostIngredientIds, includePackaging){
   var p = getProduct(productId);
   batches = Number(batches) || 0;
-  if (!p || batches <= 0) return { ingredientRows:[], ingredientCost:0, laborCost:0, packagingCost:0, total:0 };
+  if (!p || batches <= 0) return { ingredientRows:[], ingredientCost:0, packagingCost:0, total:0 };
   var r = ensureRecipe(p);
   var lost = lostIngredientIds || [];
   var ingredientRows = r.ingredientUsage.map(function(u){
@@ -565,23 +554,17 @@ function lossBreakdown(productId, batches, lostIngredientIds, includeLabor, incl
   var ingredientCost = ingredientRows.reduce(function(s,row){ return s + row.cost; }, 0);
 
   var c = recipeCosts(p);
-  var g = state.financialGoals || {};
-  var hourCost = Number(g.laborHourCost) || 0;
-  var batchMin = Number(r.batchMinutes) || 0;
-  var laborPerBatch = (hourCost > 0 && batchMin > 0) ? (batchMin / 60 * hourCost) : 0;
   var packagingPerBatch = c.packagingPerUnit * c.yieldQty;
-  var laborCost = includeLabor ? laborPerBatch * batches : 0;
   var packagingCost = includePackaging ? packagingPerBatch * batches : 0;
 
   return {
     ingredientRows:ingredientRows, ingredientCost:ingredientCost,
-    laborCost:laborCost, packagingCost:packagingCost,
-    laborAvailable: laborPerBatch > 0,
-    total: ingredientCost + laborCost + packagingCost
+    packagingCost:packagingCost,
+    total: ingredientCost + packagingCost
   };
 }
 function lossEventCost(ev){
-  return lossBreakdown(ev.productId, ev.batches, ev.lostIngredientIds, ev.includeLabor, ev.includePackaging).total;
+  return lossBreakdown(ev.productId, ev.batches, ev.lostIngredientIds, ev.includePackaging).total;
 }
 /* Por padrão marca TODO ingrediente da receita como perdido — o caso
    comum é a fornada inteira ir pro lixo. A pessoa desmarca só o que
@@ -591,7 +574,7 @@ function allRecipeIngredientIds(p){
 }
 function makeLossDraft(productId){
   var p = getProduct(productId);
-  return { productId:productId||'', batches:1, date:todayStr(), note:'', includeLabor:true, includePackaging:false, lostIngredientIds:allRecipeIngredientIds(p) };
+  return { productId:productId||'', batches:1, date:todayStr(), note:'', includePackaging:false, lostIngredientIds:allRecipeIngredientIds(p) };
 }
 
 /* Quanto custa comprar, PELA PRIMEIRA VEZ, todos os ingredientes E
@@ -668,7 +651,7 @@ function computeSalesGoals(){
   var target = monthlyProfitTarget();
   return state.products.filter(function(p){ return !isHidden(p); }).map(function(p){
     var c = recipeCosts(p);
-    /* `c.profit` já é preço − (ingredientes + embalagem + mão de obra),
+    /* `c.profit` já é preço − (ingredientes + embalagem),
        então vender `alvo / profit` cobre os insumos DAQUELAS unidades e
        ainda sobra o alvo. O detalhamento abaixo torna isso explícito em
        vez de deixar parecendo que só o custo fixo entrou na conta. */
@@ -3019,7 +3002,7 @@ function pageAnalysesVendas(){
   var tiles = '<div class="stat-grid">' +
     statTile('Faturamento', currency(a.totalRevenue), 'coin', 'brand', revenueDeltaSub) +
     statTile('Lucro das vendas', currency(a.totalProfit), 'chart', a.totalProfit >= 0 ? 'pos' : 'neg', 'margem de ' + a.marginPct.toFixed(1) + '%') +
-    statTile('Custo de produção', currency(a.totalCost), 'package', '', 'ingredientes + embalagem' + (Number(state.financialGoals.laborHourCost)>0 ? ' + mão de obra' : '')) +
+    statTile('Custo de produção', currency(a.totalCost), 'package', '', 'ingredientes + embalagem') +
     statTile('Perdas no período', currency(a.totalLoss), 'alert', a.totalLoss > 0 ? 'neg' : '') +
     statTile('Pedidos', a.totalOrders, 'clipboard', '', a.totalUnits + ' itens vendidos') +
     statTile('Ticket médio', currency(a.avgTicket), 'bag') +
@@ -3119,14 +3102,12 @@ function pageFinanceResumo(){
   '</div>';
 
   var table = '<div class="tbl-wrap"><table class="tbl">' +
-    '<thead><tr><th>Doce</th><th class="n">Preço</th><th class="n">Insumos</th><th class="n">Mão de obra</th><th class="n">Custo total</th><th class="n">Lucro</th><th class="n">Margem</th><th class="n">Markup</th></tr></thead><tbody>' +
+    '<thead><tr><th>Doce</th><th class="n">Preço</th><th class="n">Custo</th><th class="n">Lucro</th><th class="n">Margem</th><th class="n">Markup</th></tr></thead><tbody>' +
     rows.map(function(r){
       var c = r.c;
       return '<tr>' +
         '<td class="k">'+esc(r.p.name)+'</td>' +
         '<td class="n">'+currency(c.sellPrice)+'</td>' +
-        '<td class="n">'+currency(c.materialPerPackage)+'</td>' +
-        '<td class="n">'+(c.laborPerPackage>0?currency(c.laborPerPackage):'—')+'</td>' +
         '<td class="n">'+currency(c.finalCostPerPackage)+'</td>' +
         '<td class="n" style="color:'+(c.profit>0?'var(--ok)':'var(--danger)')+';font-weight:800">'+currency(c.profit)+'</td>' +
         '<td class="n">'+(c.sellPrice>0?c.marginPct.toFixed(0)+'%':'—')+'</td>' +
@@ -3295,20 +3276,16 @@ function recipeUsageTable(p, rows, kind){
 function recipeProductCard(p){
   var r = ensureRecipe(p);
   var c = recipeCosts(p);
-  var hasLabor = Number(state.financialGoals.laborHourCost) > 0;
   return '<div class="admin-card">' +
     '<div class="admin-card-head">'+icon('cake',18,'var(--brand)')+'<h3 style="flex:1">'+esc(p.name)+'</h3>' +
       '<span class="pill '+(c.profit>0?'pill-ok':'pill-danger')+'">'+currency(c.profit)+' por unidade</span></div>' +
 
-    '<div class="fin-grid-3" style="margin-bottom:16px">' +
+    '<div class="fin-grid-2" style="margin-bottom:16px">' +
       '<div class="field" style="margin:0"><label for="ry-'+p.id+'">Rendimento da receita (unidades)</label>' +
         '<input class="input sm" id="ry-'+p.id+'" type="number" inputmode="numeric" step="1" min="1" value="'+(r.yieldQty||1)+'" data-action="setRecipeYield" data-id="'+p.id+'"></div>' +
       '<div class="field" style="margin:0"><label for="ru-'+p.id+'">Unidades por embalagem vendida</label>' +
         '<input class="input sm" id="ru-'+p.id+'" type="number" inputmode="numeric" step="1" min="1" value="'+(r.unitsPerPackage||1)+'" data-action="setRecipeUnitsPerPackage" data-id="'+p.id+'"></div>' +
-      '<div class="field" style="margin:0"><label for="rb-'+p.id+'">Tempo de produção do lote (min)</label>' +
-        '<input class="input sm" id="rb-'+p.id+'" type="number" inputmode="numeric" step="5" min="0" value="'+(r.batchMinutes||0)+'" data-action="setRecipeBatchMinutes" data-id="'+p.id+'"></div>' +
     '</div>' +
-    (!hasLabor ? '<p class="hint" style="margin-top:-8px;margin-bottom:14px">'+icon('info',12)+' Defina o <b>custo da sua hora</b> em Metas para o tempo do lote virar custo.</p>' : '') +
 
     '<p class="field-label" style="margin-top:6px">Ingredientes da receita inteira</p>' +
     recipeUsageTable(p, r.ingredientUsage, 'ingredient') +
@@ -3322,7 +3299,6 @@ function recipeProductCard(p){
       '<tr><td class="k">Ingredientes da receita</td><td class="n">'+currency(c.ingredientTotal)+'</td></tr>' +
       '<tr><td class="k">Custo por unidade produzida</td><td class="n">'+currency(c.costPerUnit)+'</td></tr>' +
       '<tr><td class="k">Embalagem por unidade</td><td class="n">'+currency(c.packagingPerUnit)+'</td></tr>' +
-      (c.laborPerUnit>0 ? '<tr><td class="k">Mão de obra por unidade</td><td class="n">'+currency(c.laborPerUnit)+'</td></tr>' : '') +
       '<tr class="total-row"><td>Custo da embalagem vendida</td><td class="n">'+currency(c.finalCostPerPackage)+'</td></tr>' +
       '<tr><td class="k">Preço de venda</td><td class="n">'+currency(c.sellPrice)+'</td></tr>' +
       '<tr class="total-row"><td>Lucro por venda</td><td class="n" style="color:'+(c.profit>0?'var(--ok)':'var(--danger)')+'">'+currency(c.profit)+' ('+c.marginPct.toFixed(0)+'%)</td></tr>' +
@@ -3404,7 +3380,7 @@ function pageFinanceMetas(){
       ? 'Sem meta pra bater — só "se eu vender X de um doce por dia, quanto entra e quanto sobra".'
       : isCustoInicialMode
       ? 'Quanto vender do doce escolhido pra recuperar o que foi gasto pra começar — ingredientes da primeira fornada e equipamentos/utensílios.'
-      : 'Lucro é o que sobra depois de pagar ingredientes, embalagem, mão de obra, custo fixo e imposto. É o número que importa.')+'</p></div>' +
+      : 'Lucro é o que sobra depois de pagar ingredientes, embalagem, custo fixo e imposto. É o número que importa.')+'</p></div>' +
     modeField +
     (mixBlock ? '<div style="margin-top:14px">'+mixBlock+'</div>' : '') +
   '</div>';
@@ -3686,7 +3662,7 @@ function lossDraftForm(){
   }
   var p = getProduct(d.productId) || prods[0];
   if (p.id !== d.productId){ d.productId = p.id; d.lostIngredientIds = allRecipeIngredientIds(p); }
-  var b = lossBreakdown(d.productId, d.batches, d.lostIngredientIds, d.includeLabor, d.includePackaging);
+  var b = lossBreakdown(d.productId, d.batches, d.lostIngredientIds, d.includePackaging);
 
   var checklist = '<div class="tbl-wrap"><table class="tbl" style="min-width:0">' +
     '<thead><tr><th></th><th>O que foi perdido</th><th class="n">Quantidade</th><th class="n">Custo</th></tr></thead><tbody>' +
@@ -3698,9 +3674,6 @@ function lossDraftForm(){
         '<td class="n" style="color:'+(row.lost?'var(--danger)':'var(--ink-3)')+';font-weight:800">'+(row.lost?currency(row.cost):'—')+'</td>' +
       '</tr>';
     }).join('') +
-    '<tr><td>'+toggleBox(d.includeLabor, 'toggleLossDraftLabor', '', 'Mão de obra perdida')+'</td>' +
-      '<td class="k">Mão de obra da fornada</td><td class="n">—</td>' +
-      '<td class="n" style="color:'+(d.includeLabor && b.laborCost>0?'var(--danger)':'var(--ink-3)')+';font-weight:800">'+(b.laborAvailable ? (d.includeLabor?currency(b.laborCost):'—') : 'sem custo/hora definido')+'</td></tr>' +
     '<tr><td>'+toggleBox(d.includePackaging, 'toggleLossDraftPackaging', '', 'Embalagem perdida')+'</td>' +
       '<td class="k">Embalagem (só se já foi usada)</td><td class="n">—</td>' +
       '<td class="n" style="color:'+(d.includePackaging?'var(--danger)':'var(--ink-3)')+';font-weight:800">'+(d.includePackaging?currency(b.packagingCost):'—')+'</td></tr>' +
@@ -4616,7 +4589,7 @@ document.addEventListener('click', function(e){
     var newLoss = {
       id: 'loss'+Date.now(), productId: d.productId, batches: batches,
       date: d.date || todayStr(), note: (d.note||'').trim(),
-      includeLabor: d.includeLabor, includePackaging: d.includePackaging,
+      includePackaging: d.includePackaging,
       lostIngredientIds: d.lostIngredientIds.slice()
     };
     state.lossEvents.unshift(newLoss);
@@ -4661,7 +4634,6 @@ document.addEventListener('click', function(e){
     else state.lossDraft.lostIngredientIds.splice(liIdx, 1);
     render();
   }
-  else if (action === 'toggleLossDraftLabor') { state.lossDraft.includeLabor = !state.lossDraft.includeLabor; render(); }
   else if (action === 'toggleLossDraftPackaging') { state.lossDraft.includePackaging = !state.lossDraft.includePackaging; render(); }
   else if (action === 'resetRate') { state.consumptionRate = {}; render(); toast('Voltou para as vendas reais dos últimos 30 dias.', 'ok'); }
   else if (action === 'planFromPending') {
@@ -5019,7 +4991,6 @@ document.addEventListener('change', function(e){
   /* receitas */
   else if (action === 'setRecipeYield') { var ry = getProduct(el.dataset.id); if (ry) { var r1 = ensureRecipe(ry); r1.yieldQty = Number(el.value) || 1; dbSet('products/'+ry.id+'/recipe', r1); } render(); }
   else if (action === 'setRecipeUnitsPerPackage') { var ru = getProduct(el.dataset.id); if (ru) { var r2 = ensureRecipe(ru); r2.unitsPerPackage = Number(el.value) || 1; dbSet('products/'+ru.id+'/recipe', r2); } render(); }
-  else if (action === 'setRecipeBatchMinutes') { var rb = getProduct(el.dataset.id); if (rb) { var r3 = ensureRecipe(rb); r3.batchMinutes = Number(el.value) || 0; dbSet('products/'+rb.id+'/recipe', r3); } render(); }
   else if (action === 'setRecipeIngredient') { var ri2 = getProduct(el.dataset.id); if (ri2) { var r4 = ensureRecipe(ri2); r4.ingredientUsage[Number(el.dataset.idx)].ingredientId = el.value; dbSet('products/'+ri2.id+'/recipe', r4); } render(); }
   else if (action === 'setRecipeIngredientQty') { var ri3 = getProduct(el.dataset.id); if (ri3) { var r5 = ensureRecipe(ri3); r5.ingredientUsage[Number(el.dataset.idx)].qty = Number(el.value) || 0; dbSet('products/'+ri3.id+'/recipe', r5); } render(); }
   else if (action === 'setRecipePackaging') { var rk2 = getProduct(el.dataset.id); if (rk2) { var r6 = ensureRecipe(rk2); r6.packagingUsage[Number(el.dataset.idx)].packagingId = el.value; dbSet('products/'+rk2.id+'/recipe', r6); } render(); }
@@ -5136,7 +5107,7 @@ document.addEventListener('submit', function(e){
     local: localName,
     payment: state.orderPayment,
     observacoes: observacoes,
-    /* unitCost é o custo (ingredientes+embalagem+mão de obra) CONGELADO
+    /* unitCost é o custo (ingredientes+embalagem) CONGELADO
        no instante da venda — sem isso, reajustar o preço de um insumo
        reescreveria o lucro de pedidos já fechados, meses depois. */
     items: items.map(function(i){ return { productId: i.product.id, name: i.product.name, qty: i.qty, price: i.product.price, unitCost: recipeCosts(i.product).finalCostPerPackage }; }),

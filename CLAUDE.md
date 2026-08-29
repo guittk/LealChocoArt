@@ -208,8 +208,6 @@ filtros, agrupamento por dia), **Agenda**, **Pontos**, **Análises** e
   (30 dias / mês / tudo) e opção de contar só concluídos.
 - **Financeiro** tem sete sub-abas: Resumo, Ingredientes, Embalagens, Receitas,
   Metas, **Compras** e Histórico.
-  - `recipeCosts()` inclui **mão de obra** (`batchMinutes` da receita ×
-    `laborHourCost` das metas ÷ rendimento).
   - **Metas** aceita meta de **lucro** ou de **faturamento**, custo fixo mensal,
     taxa MEI, e um **cenário de mix** (`computeMixScenario`) para a conta
     considerar vários doces ao mesmo tempo em vez de um só.
