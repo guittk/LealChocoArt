@@ -202,6 +202,21 @@ service cloud.firestore {
       allow delete: if isSocio();
     }
 
+    // MARKETING — plano de postagens (`/marketing`): a linha editorial da
+    // casa. Três coleções, mesma régua do regimento e do catálogo de soluções
+    // (todo mundo do time lê, só sócio escreve): é estratégia da empresa, não
+    // trabalho de projeto.
+    //
+    //   apice_contentPillars  — os tipos de conteúdo (o que se posta às terças)
+    //   apice_postSuggestions — a fila de pautas de cada tipo
+    //   apice_postingSlots    — a grade da semana (dia + hora -> tipo)
+    match /{collection}/{docId} {
+      allow read: if isActiveUser() &&
+        collection in ['apice_contentPillars', 'apice_postSuggestions', 'apice_postingSlots'];
+      allow write: if isSocio() &&
+        collection in ['apice_contentPillars', 'apice_postSuggestions', 'apice_postingSlots'];
+    }
+
     // Invites gate who may join. Socios manage them; a signed-in person may
     // read only the invite addressed to their own e-mail.
     match /apice_invites/{email} {
@@ -498,6 +513,18 @@ service cloud.firestore {
     match /woc_siteConfig/{id} {
       allow read: if true;
       allow write: if request.auth != null;
+    }
+
+    // ============================================================
+    // Beach — roteiro/simulador de viagem para Martim de Sá.
+    // Uso pessoal, sem login. Um único documento carrega o estado
+    // inteiro do simulador serializado em JSON (sem dado sensível —
+    // é um orçamento de viagem), por isso leitura e escrita são
+    // liberadas sem autenticação.
+    // ============================================================
+
+    match /beach_state/{id} {
+      allow read, write: if true;
     }
 
     // Deny everything else by default.
